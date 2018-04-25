@@ -1,5 +1,9 @@
-from gacs.rucio.RucioStorageElement import RucioStorageElement
-from gacs.sal.StorageLinkSelector import StorageLinkSelector
+
+from copy import deepcopy
+
+from gacs.rucio.rse import RucioStorageElement
+from gacs.sal.link_selector import StorageLinkSelector
+import gacs.common.utils
 
 class GoogleBucket(RucioStorageElement):
     TYPE_MULTI = 1
@@ -99,19 +103,19 @@ class GoogleCloud:
 
     def setup_default_linkselectors(self):
         if len(self.region_list) == 0:
-            raise RuntimeError('Need default regions before creating default linkselectors for cloud obj {}'.format(self.name))
+            raise RuntimeError('Need regions before creating default linkselectors for cloud obj {}'.format(self.name))
         for src_region in self.region_list:
             for dst_region in self.region_list:
                 if src_region == dst_region:
                     continue
-                linkselector = src_region.createLinkSelector(dst_region)
+                linkselector = src_region.create_linkselector(dst_region)
                 self.linkselector_list.append(linkselector)
 
     def setup_default_networkcosts(self):
         if len(self.region_list) == 0:
-            raise RuntimeError('Need default regions before setting default network costs for cloud obj {}'.format(self.name))
+            raise RuntimeError('Need regions before setting default network costs for cloud obj {}'.format(self.name))
         if len(self.linkselector_list) == 0:
-            raise RuntimeError('Need default linkselectors before setting default network costs for cloud obj {}'.format(self.name))
+            raise RuntimeError('Need linkselectors before setting default network costs for cloud obj {}'.format(self.name))
 
         """
         eu - apac EF0A-B3BA-32CA 0.1121580 0.1121580 0.1028115 0.0747720
@@ -187,6 +191,12 @@ class GoogleCloud:
 
     def setup_default_operationcosts(self):
         pass
+
+    def setup_default(self):
+        self.setup_default_regions()
+        self.setup_default_linkselectors()
+        self.setup_default_networkcosts()
+        self.setup_default_operationcosts()
 
     def get_as_graph(self):
         graph = {}

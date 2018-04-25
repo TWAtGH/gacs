@@ -1,4 +1,5 @@
-from gacs.sal.replica import Replica
+
+from gacs.rucio.replica import Replica
 
 class File:
     def __init__(self, file_name, size):

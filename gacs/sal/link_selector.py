@@ -1,7 +1,9 @@
 
+from gacs.common.utils import next_id
+
 class StorageLink:
     def __init__(self, linkselector, bandwidth):
-        self.id = next(idgen)
+        self.id = next_id()
         self.linkselector = linkselector
         self.bandwidth = bandwidth # 2**30
         self.used_traffic = 0
@@ -12,7 +14,7 @@ class StorageLink:
 
 class StorageLinkSelector:
     def __init__(self, src_region, dst_region):
-        self.id = next(idgen)
+        self.id = next_id()
         self.src_region = src_region
         self.dst_region = dst_region
         self.total_transferred = 0

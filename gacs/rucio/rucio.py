@@ -1,4 +1,8 @@
 
+from gacs.rucio.file import File
+from gacs.rucio.replica import Replica
+from gacs.rucio.rse import RucioStorageElement
+
 class Rucio:
     def __init__(self):
         self.rse_list = []

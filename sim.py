@@ -4,26 +4,12 @@ import random
 
 import simpy
 
-from itertools import count
-from copy import deepcopy
+from gacs.clouds.gcp import GoogleBucket
 
-idgen = count(1)
-
-logging.basicConfig(format='[{simtime:>10} - {levelname:8}]: {message}', style='{', level=logging.INFO)
-
-def log_debug(logger, time, msg):
-    logger.debug(msg, extra={'simtime':time})
-def log_info(logger, time, msg):
-    logger.info(msg, extra={'simtime':time})
-def log_warning(logger, time, msg):
-    logger.warning(msg, extra={'simtime':time})
-def log_error(logger, time, msg):
-    logger.error(msg, extra={'simtime':time})
-def log_critical(logger, time, msg):
-    logger.critical(msg, extra={'simtime':time})
-
-def log(time, msg):
-    print('[{:5d}] {}'.format(time, msg))
+from gacs.sim.basesim import BaseSim
+from gacs.rucio.replica import Replica
+from gacs.common.logging import SimLogger
+from gacs.common.utils import next_id 
 
 class ComputeInstance:
     def __init__(self, bucket_obj):
@@ -31,36 +17,37 @@ class ComputeInstance:
 
 class Job:
     def __init__(self, compute_instance, input_files):
-        self.id = next(idgen)
+        self.id = next_id()
         self.compute_instance = compute_instance
         self.input_files = input_files
         self.output_files = []
-
+"""
 class GridSite(RucioStorageElement):
     def __init__(self, site_name):
         super().__init__(site_name)
 
     def on_replica_increased(self, replica, amount):
         super().on_replica_increased(replica, amount)
-
-class CloudSimulator:
+"""
+class CloudSimulator(BaseSim):
     def __init__(self, sim, cloud, rucio):
+        super().__init__()
         self.sim = sim
         self.cloud = cloud
         self.rucio = rucio
 
     def billing_process(self):
-        log = logging.getLogger('billing_proc')
-        log_info(log, self.sim.now, 'Started Billing Proc!')
+        log = self.logger.getChild('billing_proc')
+        log.info('Started Billing Proc!', self.sim.now)
         billing_month = 1
         while True:
             yield self.sim.timeout(30*24*3600) # calc bill every month
-            log_info(log, self.sim.now, 'BILLING TIME FOR MONTH {}!'.format(billing_month))
-            log_info(log, self.sim.now, 'Updating all transfers')
+            log.info('BILLING TIME FOR MONTH {}!'.format(billing_month), self.sim.now)
+            log.info('Updating all transfers', self.sim.now)
             for transfer in self.cloud.transfer_list:
                 transfer.update(sim.now)
 
-            log_info(log, self.sim.now, 'Calculating storage costs')
+            log.info('Calculating storage costs', self.sim.now)
             storage_costs = {}
             storage_costs_total = 0
             for bucket in self.cloud.bucket_list:
@@ -69,22 +56,22 @@ class CloudSimulator:
                 #bucket.reset_storage_costs()
                 storage_costs[bucket.name] = costs
                 storage_costs_total += costs
-            log_info(log, self.sim.now, 'CHF {} of storage costs'.format(storage_costs_total))
+            log.info('CHF {} of storage costs'.format(storage_costs_total), self.sim.now)
 
-            log_info(log, self.sim.now, 'Calculating network costs')
+            log.info('Calculating network costs', self.sim.now)
             network_costs_total = 0
             for linkselector in self.cloud.linkselector_list:
                 costs = 0
                 #costs = linkselector.get_traffic_cost()
                 #linkselector.reset_traffic_costs()
                 network_costs_total += costs
-            log_info(log, self.sim.now, 'CHF {} of network costs'.format(network_costs_total))
+            log.info('CHF {} of network costs'.format(network_costs_total), self.sim.now)
 
             billing_month = (billing_month % 13) + 1
 
     def transfer_process(self, transfer):
-        log = logging.getLogger('transfer_proc')
-        log_debug(log, self.sim.now, 'Starting transfer: File {} from {} to {}'.format(transfer.file.name, transfer.src_replica.rse_obj.name, transfer.dst_replica.rse_obj.name))
+        log = self.logger.getChild('transfer_proc')
+        log.debug('Starting transfer: File {} from {} to {}'.format(transfer.file.name, transfer.src_replica.rse_obj.name, transfer.dst_replica.rse_obj.name), self.sim.now)
         transfer.begin(self.sim.now)
         while transfer.state == Transfer.TRANSFER:
             yield self.sim.timeout(10)
@@ -106,18 +93,19 @@ class CloudSimulator:
         return [[sources]]
 
     def stagein_process(self, job):
-        log = logging.getLogger('job_proc')
-        log_debug(log, self.sim.now, 'Staging-IN job {}: {} files'.format(job.id, len(job.input_files)))
+        log = self.logger.getChild('job_proc')
+        log.debug('Staging-IN job {}: {} files'.format(job.id, len(job.input_files)), self.sim.now)
         for f in job.input_files:
             if job.compute_instance.bucket_obj.name in f.rse_by_name:
-                log_debug(log, self.sim.now, 'Skipping transfer: File already exists')
+                log.debug('Skipping transfer: File already exists', self.sim.now)
                 continue
             transfer_lists = self.find_best_transfers(f, job.compute_instance.bucket_obj)
             for transfer_list in transfer_lists:
                 for src_replica in transfer_list: # TODO
+                    pass
 
                 if len(transfer_list) == 0:
-                    log_error(log, self.sim.now, 'Stage-IN job {}: failed to find source for file {}'.format(job.id, f.name))
+                    log.error('Stage-IN job {}: failed to find source for file {}'.format(job.id, f.name), self.sim.now)
                     return False
                 transfer_procs = []
                 for src_replica in transfer_list:
@@ -128,8 +116,8 @@ class CloudSimulator:
                 yield self.sim.all_of(transfer_procs)
 
     def stageout_process(self, job):
-        log = logging.getLogger('job_proc')
-        log_debug(log, self.sim.now, 'Staging-OUT job {}: {} files'.format(job.id, len(job.output_files)))
+        log = self.logger.getChild('job_proc')
+        log.debug('Staging-OUT job {}: {} files'.format(job.id, len(job.output_files)), self.sim.now)
         transfer_procs = []
         for f in job.output_files:
             # linkselector = ?
@@ -142,12 +130,12 @@ class CloudSimulator:
         yield self.sim.timeout(120) # pretend stageout
 
     def job_process(self, job):
-        log = logging.getLogger('job_proc')
-        log_debug(log, self.sim.now, 'Started job {}'.format(job.id))
+        log = self.logger.getChild('job_proc')
+        log.debug('Started job {}'.format(job.id), self.sim.now)
 
         value = yield self.sim.process(self.stagein_process(job))
         if value == False:
-            log_error(log, self.sim.now, 'Stage-IN failed. Cannot run job {}'.format(job.id))
+            log.error('Stage-IN failed. Cannot run job {}'.format(job.id), self.sim.now)
             return False
         job_runtime = random.randint(1800, 36000)
         yield self.sim.timeout(job_runtime)
@@ -159,23 +147,23 @@ class CloudSimulator:
         yield self.sim.process(self.stageout_process(job))
 
     def job_factory(self):
-        log = logging.getLogger('job_factory')
-        log_info(log, self.sim.now, 'Started Job Factory!')
+        log = self.logger.getChild('job_factory')
+        log.info('Started Job Factory!', self.sim.now)
         min_wait = 5 * 3600
         max_wait = 24 * 3600
 
         while True:
             wait = random.randint(min_wait, max_wait)
             yield self.sim.timeout(wait)
-            log_info(log, self.sim.now, 'Time for new jobs! Waited {}.'.format(wait))
+            log.info('Time for new jobs! Waited {}.'.format(wait), self.sim.now)
 
             total_file_count = len(rucio.file_list)
             total_region_count = len(cloud.region_list)
             if total_file_count == 0:
-                log_warning(log, self.sim.now, 'Cannot generate jobs. No files registered.')
+                log.warning('Cannot generate jobs. No files registered.', self.sim.now)
                 continue
             if total_region_count == 0:
-                log_warning(log, self.sim.now, 'Cannot generate jobs. No regions registered.')
+                log.warning('Cannot generate jobs. No regions registered.', self.sim.now)
                 continue
 
             num_files = min(random.randint(1,100), total_file_count)
@@ -188,10 +176,7 @@ class CloudSimulator:
     def init_simulation(self):
         random.seed(42)
 
-        self.cloud.setup_default_regions()
-        self.cloud.setup_default_linkselectors()
-        self.cloud.setup_default_networkcosts()
-        self.cloud.setup_default_operationcosts()
+        self.cloud.setup_default()
 
         for region in self.cloud.region_list:
             self.cloud.create_bucket(region, 'bucket01_{}'.format(region.name), GoogleBucket.TYPE_REGIONAL)
@@ -200,7 +185,7 @@ class CloudSimulator:
         for linkselector in self.cloud.linkselector_list:
             num_links = random.randint(1,3)
             for i in range(num_links):
-                linkselector.create_link(random.randint(2**28,2**(31-num_links))
+                linkselector.create_link(random.randint(2**28,2**(31-num_links)))
 
         total_stored = 0
         import uuid
@@ -217,7 +202,8 @@ class CloudSimulator:
         self.sim.process(self.job_factory())
         self.sim.run(until=65*24*3600)
 
-
+from gacs.clouds.gcp import GoogleCloud
+from gacs.rucio.rucio import Rucio
 sim = simpy.Environment()
 cloud = GoogleCloud()
 rucio = Rucio()

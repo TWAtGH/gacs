@@ -1,4 +1,7 @@
+
+from gacs.common.utils import next_id
 from gacs.rucio.replica import Replica
+
 
 class Transfer:
     INIT = 1
@@ -8,7 +11,7 @@ class Transfer:
     FAILED = 5
 
     def __init__(self, file, linkselector, src_replica, dst_replica):
-        self.id = next(idgen)
+        self.id = next_id()
         self.file = file
         self.linkselector = linkselector
         self.src_replica = src_replica

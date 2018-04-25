@@ -1,4 +1,6 @@
 
+from gacs.common.utils import next_id
+
 class Replica:
     NEW = 0
     TRANSFER = 1
@@ -6,12 +8,11 @@ class Replica:
     DELETED = 3
 
     def __init__(self, rse_obj, file_obj):
-        self.id = next(idgen)
+        self.id = next_id()
         self.rse_obj = rse_obj
         self.file = file_obj
         self.size = 0
         self.state = self.NEW
-        self.num_
 
     def increase(self, amount):
         self.size += amount
