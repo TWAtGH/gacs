@@ -141,7 +141,7 @@ class CloudSimulator(BaseSim):
         yield self.sim.timeout(job_runtime)
         for f in job.input_files: 
             output_name = 'out_j{}_i{}'.format(job.id, f.name)
-            out_file = self.rucio.create_file(output_name, random.randint(2**29, 2**32))
+            out_file = self.rucio.create_file(output_name, random.randint(2**29, 2**32), 3600*24*7)
             job.output_files.append(out_file)
 
         yield self.sim.process(self.stageout_process(job))
@@ -173,6 +173,15 @@ class CloudSimulator(BaseSim):
             for file in input_files:
                 self.sim.process(self.job_process(Job(compute_instance, [file])))
 
+    def reaper_process(self):
+        log = self.logger.getChild('reaper_process')
+        log.info('Started Reaper Process!', self.sim.now)
+        while True:
+            num_deleted = self.rucio.run_reaper(self.sim.now)
+            if num_deleted:
+                log.info('Deleted {} useless files'.format(num_deleted))
+            yield self.sim.timeout(300)
+
     def init_simulation(self):
         random.seed(42)
 
@@ -192,14 +201,15 @@ class CloudSimulator(BaseSim):
         for i in range(10000):
             size = random.randint(2**28, 2**32)
             total_stored += size
-            f = self.rucio.create_file(str(uuid.uuid4()), size)
+            f = self.rucio.create_file(str(uuid.uuid4()), size, 3600*24*7)
             replica = self.rucio.create_replica(f, random.choice(self.cloud.bucket_list))
             replica.size = size
             replica.state = Replica.COMPLETE
 
     def simulate(self):
         self.sim.process(self.billing_process())
-        self.sim.process(self.job_factory())
+        # self.sim.process(self.job_factory())
+        self.sim.process(self.reaper_process())
         self.sim.run(until=65*24*3600)
 
 from gacs.clouds.gcp import GoogleCloud
