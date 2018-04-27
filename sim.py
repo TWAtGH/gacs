@@ -177,9 +177,7 @@ class CloudSimulator(BaseSim):
         log = self.logger.getChild('reaper_process')
         log.info('Started Reaper Process!', self.sim.now)
         while True:
-            num_deleted = self.rucio.run_reaper(self.sim.now)
-            if num_deleted:
-                log.info('Deleted {} useless files'.format(num_deleted))
+            num_deleted = self.rucio.run_reaper_bisect(self.sim.now)
             yield self.sim.timeout(300)
 
     def init_simulation(self):
@@ -201,7 +199,7 @@ class CloudSimulator(BaseSim):
         for i in range(10000):
             size = random.randint(2**28, 2**32)
             total_stored += size
-            f = self.rucio.create_file(str(uuid.uuid4()), size, 3600*24*7)
+            f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24, 3600*24*7))
             replica = self.rucio.create_replica(f, random.choice(self.cloud.bucket_list))
             replica.size = size
             replica.state = Replica.COMPLETE

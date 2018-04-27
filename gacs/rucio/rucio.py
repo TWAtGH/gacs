@@ -1,7 +1,12 @@
 
+import heapq
+import bisect
+
 from gacs.rucio.file import File
 from gacs.rucio.replica import Replica
 from gacs.rucio.rse import RucioStorageElement
+
+import itertools
 
 class Rucio:
     def __init__(self):
@@ -10,6 +15,10 @@ class Rucio:
 
         self.file_list = []
         self.file_by_name = {}
+
+        self.die_time_prio_counter = itertools.count(1)
+        self.die_times = []
+
 
     def get_rse_obj(self, rse):
         rse_obj = None
@@ -58,15 +67,44 @@ class Rucio:
         new_file = File(file_name, file_size, die_time)
         self.file_list.append(new_file)
         self.file_by_name[file_name] = new_file
+        # O(log n) search + rebalancing
+        # heapq.heappush(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
+
+        # O(log n) search + insertion
+        bisect.insort(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
         return new_file
 
     def delete_file(self, file):
-        file = self.get_file_obj(file)
+        # file = self.get_file_obj(file)
+        self.die_times.remove(file.die_time)
+        # TODO: rebalance heap
+        file.delete()
         self.file_list.remove(file)
         del self.file_by_name[file.name]
-        file.delete()
 
-    def run_reaper(self, cur_time):
+    def run_reaper_heap(self, cur_time):
+        num_files = len(self.file_list)
+        while len(self.die_times) and self.die_times[0][0] <= cur_time:
+            self.delete_file(self.die_times[0][2])
+            heapq.heappop(self.die_times)
+        return num_files - len(self.file_list)
+
+    def run_reaper_bisect(self, cur_time):
+        num_files = len(self.file_list)
+        if not num_files:
+            return 0
+
+        p = bisect.bisect_right(self.die_times, (cur_time, 0, None))
+        for i in range(p):
+            f = self.file_list[i]
+            f.delete()
+            del self.file_by_name[f.name]
+
+        del self.file_list[0:p]
+        del self.die_times[0:p]
+        return num_files - len(self.file_list)
+
+    def run_reaper_linear(self, cur_time):
         num_files = len(self.file_list)
 
         i = 0
@@ -88,7 +126,6 @@ class Rucio:
 
         if k < num_files - 1:
             del self.file_list[k+1:]
-
         return num_files - len(self.file_list)
 
     def create_transfer(self, file, linkselector, src_replica, dst_bucket):
