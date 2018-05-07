@@ -74,18 +74,13 @@ class Rucio:
         bisect.insort(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
         return new_file
 
-    def delete_file(self, file):
-        # file = self.get_file_obj(file)
-        self.die_times.remove(file.die_time)
-        # TODO: rebalance heap
-        file.delete()
-        self.file_list.remove(file)
-        del self.file_by_name[file.name]
-
     def run_reaper_heap(self, cur_time):
         num_files = len(self.file_list)
         while len(self.die_times) and self.die_times[0][0] <= cur_time:
-            self.delete_file(self.die_times[0][2])
+            file = self.die_times[0][2]
+            file.delete()
+            self.file_list.remove(file)
+            del self.file_by_name[file.name]
             heapq.heappop(self.die_times)
         return num_files - len(self.file_list)
 

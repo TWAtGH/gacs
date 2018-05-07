@@ -36,6 +36,8 @@ class CloudSimulator(BaseSim):
         self.cloud = cloud
         self.rucio = rucio
 
+        self.TRANSFER_UPDATE_DELAY = 10
+
     def billing_process(self):
         log = self.logger.getChild('billing_proc')
         log.info('Started Billing Proc!', self.sim.now)
@@ -74,7 +76,7 @@ class CloudSimulator(BaseSim):
         log.debug('Starting transfer: File {} from {} to {}'.format(transfer.file.name, transfer.src_replica.rse_obj.name, transfer.dst_replica.rse_obj.name), self.sim.now)
         transfer.begin(self.sim.now)
         while transfer.state == Transfer.TRANSFER:
-            yield self.sim.timeout(10)
+            yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
             transfer.update(self.sim.now)
             if transfer.state == Transfer.SRC_LOST:
                 pass
@@ -92,13 +94,19 @@ class CloudSimulator(BaseSim):
         sources.sort(key=lambda k: graph[k.rse.name][dst_bucket.name])
         return [[sources]]
 
+    def direct_copy_stagein(self, job):  # copy input files directly to compute instance
+        # + compute instance costs
+        yield self.sim.timeout(120) # pretend stageout
+
+    def replica_stagein(self, job):  # create replica in cloud storage
+        yield self.sim.timeout(120) # pretend stageout
+
     def stagein_process(self, job):
         log = self.logger.getChild('job_proc')
-        log.debug('Staging-IN job {}: {} files'.format(job.id, len(job.input_files)), self.sim.now)
+        #log.debug('Staging-IN job {}: {} files'.format(job.id, len(job.input_files)), self.sim.now)
         for f in job.input_files:
-            if job.compute_instance.bucket_obj.name in f.rse_by_name:
-                log.debug('Skipping transfer: File already exists', self.sim.now)
-                continue
+            self.rucio.download(job.compute_instance, input_files)
+
             transfer_lists = self.find_best_transfers(f, job.compute_instance.bucket_obj)
             for transfer_list in transfer_lists:
                 for src_replica in transfer_list: # TODO
@@ -117,7 +125,7 @@ class CloudSimulator(BaseSim):
 
     def stageout_process(self, job):
         log = self.logger.getChild('job_proc')
-        log.debug('Staging-OUT job {}: {} files'.format(job.id, len(job.output_files)), self.sim.now)
+        # log.debug('Staging-OUT job {}: {} files'.format(job.id, len(job.output_files)), self.sim.now)
         transfer_procs = []
         for f in job.output_files:
             # linkselector = ?
@@ -131,17 +139,26 @@ class CloudSimulator(BaseSim):
 
     def job_process(self, job):
         log = self.logger.getChild('job_proc')
-        log.debug('Started job {}'.format(job.id), self.sim.now)
+        # log.debug('Started job {}'.format(job.id), self.sim.now)
+        
+        state = False
+        if True:
+            stagein_duration = self.sim.now
+            state = yield self.sim.process(self.direct_copy_stagein(job))
+            stagein_duration = self.sim.now - stagein_duration
+            #self.add_approx_compute_costs(stagein_duration)
+        else:
+            state = yield self.sim.process(self.replica_stagein(job))
 
-        value = yield self.sim.process(self.stagein_process(job))
-        if value == False:
+        if state == False:
             log.error('Stage-IN failed. Cannot run job {}'.format(job.id), self.sim.now)
             return False
+
         job_runtime = random.randint(1800, 36000)
         yield self.sim.timeout(job_runtime)
         for f in job.input_files: 
             output_name = 'out_j{}_i{}'.format(job.id, f.name)
-            out_file = self.rucio.create_file(output_name, random.randint(2**29, 2**32), 3600*24*7)
+            out_file = self.rucio.create_file(output_name, random.randint(2**29, 2**32), self.sim.now + 3600*24*14)
             job.output_files.append(out_file)
 
         yield self.sim.process(self.stageout_process(job))
@@ -156,17 +173,13 @@ class CloudSimulator(BaseSim):
             wait = random.randint(min_wait, max_wait)
             yield self.sim.timeout(wait)
             log.info('Time for new jobs! Waited {}.'.format(wait), self.sim.now)
+            total_file_count = len(self.rucio.file_list)
+            total_region_count = len(self.cloud.region_list)
+            log.info('{} files left'.format(total_file_count))
+            assert total_file_count, 'Cannot generate jobs. No files registered.'
+            assert total_region_count, 'Cannot generate jobs. No regions registered.'
 
-            total_file_count = len(rucio.file_list)
-            total_region_count = len(cloud.region_list)
-            if total_file_count == 0:
-                log.warning('Cannot generate jobs. No files registered.', self.sim.now)
-                continue
-            if total_region_count == 0:
-                log.warning('Cannot generate jobs. No regions registered.', self.sim.now)
-                continue
-
-            num_files = min(random.randint(1,100), total_file_count)
+            num_files = min(random.randint(100, 200), total_file_count)
             input_files = random.sample(rucio.file_list, num_files)
             bucket = random.choice(self.cloud.bucket_list)
             compute_instance = ComputeInstance(bucket)
@@ -199,14 +212,14 @@ class CloudSimulator(BaseSim):
         for i in range(10000):
             size = random.randint(2**28, 2**32)
             total_stored += size
-            f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24, 3600*24*7))
+            f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24*7, 3600*24*14))
             replica = self.rucio.create_replica(f, random.choice(self.cloud.bucket_list))
             replica.size = size
             replica.state = Replica.COMPLETE
 
     def simulate(self):
         self.sim.process(self.billing_process())
-        # self.sim.process(self.job_factory())
+        self.sim.process(self.job_factory())
         self.sim.process(self.reaper_process())
         self.sim.run(until=65*24*3600)
 
