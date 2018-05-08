@@ -70,7 +70,7 @@ class Transfer:
         bandwidth = self.link.bandwidth / self.link.active_transfers
         transferred = min(bandwidth * time_passed, src_size - dst_size)
 
-        self.dst_replica.increase(transferred)
+        self.dst_replica.increase(current_time, transferred)
         self.link.used_traffic += transferred
         if src_size == dst_size:
             self.state = self.COMPLETE

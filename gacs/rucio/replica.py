@@ -14,16 +14,18 @@ class Replica:
         self.size = 0
         self.state = self.NEW
 
-    def increase(self, amount):
+    def increase(self, current_time, amount):
+        assert amount > 0
+
         amount = min(amount, self.file.size - self.size)
-        if amount < 0:
-            raise ValueError('Called Replica.increase with negative amount')
 
         self.size += amount
         if self.size == self.file.size:
             self.state = self.COMPLETE
-        self.rse_obj.on_replica_increased(self, amount)
+        self.rse_obj.on_replica_increased(self, current_time, amount)
 
-    def delete(self):
+    def delete(self, current_time, remove_from_file=True):
         self.state = self.DELETED
-        self.rse_obj.on_replica_deleted(self)
+        self.rse_obj.on_replica_deleted(self, current_time)
+        if remove_from_file:
+            self.file.remove_replica(self)

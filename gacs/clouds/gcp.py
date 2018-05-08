@@ -15,9 +15,50 @@ class GoogleBucket(RucioStorageElement):
         super().__init__(bucket_name)
         self.region_obj = region_obj
         self.storage_type = storage_type
+        self.time_at_last_reset = 0
+        self.storage_at_last_reset = 0
+        self.storage_events = []
 
-    def on_replica_increased(self, replica, amount):
-        super().on_replica_increased(replica, amount)
+    def on_replica_increased(self, replica, current_time, amount):
+        event = [current_time, amount]
+        self.storage_events.append(event)
+        super().on_replica_increased(replica, current_time, amount)
+
+    def on_replica_deleted(self, replica, current_time):
+        event = [current_time, -(replica.size)]
+        self.storage_events.append(event)
+        super().on_replica_deleted(replica, current_time)
+
+    def process_storage_billing(self, current_time):
+        price = self.region_obj.storage_price_chf
+        time_offset = self.time_at_last_reset
+        used_storage_at_time = self.storage_at_last_reset
+        costs = 0
+
+        for event in self.storage_events:
+            time_diff = event[0] - time_offset
+            assert time_diff >= 0
+            if time_diff > 0:
+                storage_gb = used_storage_at_time/(1024**3)
+                time_month = time_diff/(30*24*3600)
+                costs += storage_gb * time_month * price
+                time_offset = event[0]
+            used_storage_at_time += event[1]
+
+        assert used_storage_at_time == self.used_storage
+
+        if time_offset < current_time:
+            time_diff = current_time - time_offset
+
+            storage_gb = used_storage_at_time/(1024**3)
+            time_month = time_diff/(30*24*3600)
+            costs += storage_gb * time_month * price
+
+        self.time_at_last_reset = current_time
+        self.storage_at_last_reset = self.used_storage
+        self.storage_events.clear()
+        return costs
+
 
 class GoogleRegion:
     def __init__(self, region_name, location_desc, multi_locations, storage_price_chf, sku_id):

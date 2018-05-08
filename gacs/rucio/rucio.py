@@ -74,9 +74,17 @@ class Rucio:
         bisect.insort(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
         return new_file
 
-    def run_reaper_heap(self, cur_time):
+    def create_transfer(self, file, linkselector, src_replica, dst_bucket):
+        dst_replica = self.create_replica(file, dst_bucket)
+        transfer = Transfer(file, linkselector, src_replica, dst_replica)
+        return transfer
+
+    def create_download(self, file):
+        return Download(file)
+
+    def run_reaper_heap(self, current_time):
         num_files = len(self.file_list)
-        while len(self.die_times) and self.die_times[0][0] <= cur_time:
+        while len(self.die_times) and self.die_times[0][0] <= current_time:
             file = self.die_times[0][2]
             file.delete()
             self.file_list.remove(file)
@@ -84,22 +92,22 @@ class Rucio:
             heapq.heappop(self.die_times)
         return num_files - len(self.file_list)
 
-    def run_reaper_bisect(self, cur_time):
+    def run_reaper_bisect(self, current_time):
         num_files = len(self.file_list)
         if not num_files:
             return 0
 
-        p = bisect.bisect_right(self.die_times, (cur_time, 0, None))
+        p = bisect.bisect_right(self.die_times, (current_time, 0, None))
         for i in range(p):
-            f = self.file_list[i]
-            f.delete()
+            f = self.die_times[i][2]
+            assert f.die_time <= current_time
+            f.delete(current_time)
+            self.file_list.remove(f)
             del self.file_by_name[f.name]
-
-        del self.file_list[0:p]
         del self.die_times[0:p]
         return num_files - len(self.file_list)
 
-    def run_reaper_linear(self, cur_time):
+    def run_reaper_linear(self, current_time):
         num_files = len(self.file_list)
 
         i = 0
@@ -107,11 +115,11 @@ class Rucio:
         while i <= k:
             item_k = self.file_list[k]
             item_i = self.file_list[i]
-            while k > 0 and item_k.die_time <= cur_time:
+            while k > 0 and item_k.die_time <= current_time:
                 k -= 1
                 item_k = self.file_list[k]
 
-            if item_i.die_time <= cur_time:
+            if item_i.die_time <= current_time:
                 item_i.delete()
                 del self.file_by_name[item_i.name]
                 self.file_list[k] = item_i
@@ -122,8 +130,3 @@ class Rucio:
         if k < num_files - 1:
             del self.file_list[k+1:]
         return num_files - len(self.file_list)
-
-    def create_transfer(self, file, linkselector, src_replica, dst_bucket):
-        dst_replica = self.create_replica(file, dst_bucket)
-        transfer = Transfer(file, linkselector, src_replica, dst_replica)
-        return transfer

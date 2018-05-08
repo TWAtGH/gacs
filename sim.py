@@ -37,6 +37,7 @@ class CloudSimulator(BaseSim):
         self.rucio = rucio
 
         self.TRANSFER_UPDATE_DELAY = 10
+        self.DOWNLOAD_UPDATE_DELAY = 10
 
     def billing_process(self):
         log = self.logger.getChild('billing_proc')
@@ -53,9 +54,7 @@ class CloudSimulator(BaseSim):
             storage_costs = {}
             storage_costs_total = 0
             for bucket in self.cloud.bucket_list:
-                costs = 0
-                #costs = bucket.get_storage_costs()
-                #bucket.reset_storage_costs()
+                costs = bucket.process_storage_billing(self.sim.now)
                 storage_costs[bucket.name] = costs
                 storage_costs_total += costs
             log.info('CHF {} of storage costs'.format(storage_costs_total), self.sim.now)
@@ -94,9 +93,15 @@ class CloudSimulator(BaseSim):
         sources.sort(key=lambda k: graph[k.rse.name][dst_bucket.name])
         return [[sources]]
 
-    def direct_copy_stagein(self, job):  # copy input files directly to compute instance
+    def direct_copy_stagein_serial(self, job):  # copy input files directly to compute instance
         # + compute instance costs
-        yield self.sim.timeout(120) # pretend stageout
+        for file in job.input_files:
+            download = self.rucio.create_download(file)
+            while download.is_running():
+                download.update(self.sim.now)
+                yield self.sim.timeout(self.DOWNLOAD_UPDATE_DELAY)
+            if not download.is_successful():
+                return False
 
     def replica_stagein(self, job):  # create replica in cloud storage
         yield self.sim.timeout(120) # pretend stageout
@@ -144,7 +149,8 @@ class CloudSimulator(BaseSim):
         state = False
         if True:
             stagein_duration = self.sim.now
-            state = yield self.sim.process(self.direct_copy_stagein(job))
+            #state = yield self.sim.process(self.direct_copy_stagein_serial(job))
+            state = yield self.sim.process(self.replica_stagein(job))
             stagein_duration = self.sim.now - stagein_duration
             #self.add_approx_compute_costs(stagein_duration)
         else:
@@ -158,7 +164,10 @@ class CloudSimulator(BaseSim):
         yield self.sim.timeout(job_runtime)
         for f in job.input_files: 
             output_name = 'out_j{}_i{}'.format(job.id, f.name)
-            out_file = self.rucio.create_file(output_name, random.randint(2**29, 2**32), self.sim.now + 3600*24*14)
+            size = random.randint(2**29, 2**32)
+            out_file = self.rucio.create_file(output_name, size, self.sim.now + 3600*24*14)
+            replica = self.rucio.create_replica(out_file, random.choice(self.cloud.bucket_list))
+            replica.increase(self.sim.now, size)
             job.output_files.append(out_file)
 
         yield self.sim.process(self.stageout_process(job))
@@ -214,8 +223,7 @@ class CloudSimulator(BaseSim):
             total_stored += size
             f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24*7, 3600*24*14))
             replica = self.rucio.create_replica(f, random.choice(self.cloud.bucket_list))
-            replica.size = size
-            replica.state = Replica.COMPLETE
+            replica.increase(0, size)
 
     def simulate(self):
         self.sim.process(self.billing_process())

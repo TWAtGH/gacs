@@ -3,6 +3,8 @@ class RucioStorageElement:
     def __init__(self, rse_name):
         self.name = rse_name
 
+        self.used_storage = 0
+
         # maybe only store files in RSE as replica
         self.replica_list = []
         self.replica_by_name = {}
@@ -13,10 +15,12 @@ class RucioStorageElement:
         self.replica_list.append(replica_obj)
         self.replica_by_name[replica_obj.file.name] = replica_obj
     
-    def on_replica_increased(self, replica, amount):
-        pass
+    def on_replica_increased(self, replica, current_time, amount):
+        self.used_storage += amount
 
-    def on_replica_deleted(self, replica):
+    def on_replica_deleted(self, replica, current_time):
+        self.used_storage -= replica.size
+
         self.replica_list.remove(replica)
         del self.replica_by_name[replica.file.name]
         self.deleted_replica_list.append(replica)

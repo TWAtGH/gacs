@@ -19,9 +19,15 @@ class File:
         self.rse_by_name[rse_obj.name] = rse_obj
         self.replica_list.append(replica_obj)
 
-    def delete(self):
+    def remove_replica(self, replica_obj):
+        rse_obj = replica_obj.rse_obj
+        self.rse_list.remove(rse_obj)
+        del self.rse_by_name[rse_obj.name]
+        self.replica_list.remove(replica_obj)
+
+    def delete(self, current_time):
         for replica_obj in self.replica_list:
-            replica_obj.delete()
+            replica_obj.delete(current_time, False)
         self.rse_list.clear()
         self.rse_by_name.clear()
         self.replica_list.clear()
