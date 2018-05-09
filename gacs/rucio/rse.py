@@ -1,20 +1,24 @@
 
+from gacs.rucio.replica import Replica
+
 class RucioStorageElement:
     def __init__(self, rse_name):
         self.name = rse_name
 
         self.used_storage = 0
 
-        # maybe only store files in RSE as replica
         self.replica_list = []
         self.replica_by_name = {}
 
-        self.deleted_replica_list = []
-
-    def add_replica(self, replica_obj):
+    def create_replica(self, file_obj):
+        if file_obj.name in self.replica_by_name:
+            pass
+        new_replica = Replica(self, file_obj)
         self.replica_list.append(replica_obj)
-        self.replica_by_name[replica_obj.file.name] = replica_obj
-    
+        self.replica_by_name[file_obj.name] = replica_obj
+        file_obj.add_replica(new_replica)
+        return new_replica
+
     def on_replica_increased(self, replica, current_time, amount):
         self.used_storage += amount
 
@@ -23,12 +27,3 @@ class RucioStorageElement:
 
         self.replica_list.remove(replica)
         del self.replica_by_name[replica.file.name]
-        self.deleted_replica_list.append(replica)
-
-    def free_space(self):
-        # space_before = self.free_space
-        for replica_obj in self.deleted_replica_list:
-            # self.free_space += replica_obj.size
-            pass
-        # return self.free_space - space_before
-        return 0

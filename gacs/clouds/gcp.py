@@ -239,6 +239,30 @@ class GoogleCloud:
         self.setup_default_networkcosts()
         self.setup_default_operationcosts()
 
+    def process_billing(self, current_time):
+        bill = {}
+        for transfer in self.transfer_list:
+            transfer.update(current_time)
+
+        storage_costs = {}
+        storage_costs_total = 0
+        for bucket in self.bucket_list:
+            costs = bucket.process_storage_billing(current_time)
+            storage_costs[bucket.name] = costs
+            storage_costs_total += costs
+        bill['storage_per_bucket'] = storage_costs
+        bill['storage_total'] = storage_costs_total
+
+        network_costs_total = 0
+        for linkselector in self.linkselector_list:
+            costs = 0
+            #costs = linkselector.get_traffic_cost()
+            #linkselector.reset_traffic_costs()
+            network_costs_total += costs
+        bill['network_total'] = network_costs_total
+
+        return bill
+
     def get_as_graph(self):
         graph = {}
         for src_bucket in self.bucket_list:

@@ -3,7 +3,6 @@ import heapq
 import bisect
 
 from gacs.rucio.file import File
-from gacs.rucio.replica import Replica
 from gacs.rucio.rse import RucioStorageElement
 
 import itertools
@@ -51,14 +50,7 @@ class Rucio:
     def create_replica(self, file, rse):
         rse_obj = self.get_rse_obj(rse)
         file_obj = self.get_file_obj(file)
-        
-        if rse_obj.name in file_obj.rse_by_name:
-            raise RuntimeError('Rucio.create_replica: rse {} has already a replica of {}'.format(rse_obj.name, file_obj.name))
-
-        new_replica = Replica(rse_obj, file_obj)
-        rse_obj.add_replica(new_replica)
-        file_obj.add_replica(new_replica)
-        return new_replica
+        return rse_obj.create_replica(file_obj)
 
     def create_file(self, file_name, file_size, die_time):
         if file_name in self.file_by_name:

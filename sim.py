@@ -46,27 +46,10 @@ class CloudSimulator(BaseSim):
         while True:
             yield self.sim.timeout(30*24*3600) # calc bill every month
             log.info('BILLING TIME FOR MONTH {}!'.format(billing_month), self.sim.now)
-            log.info('Updating all transfers', self.sim.now)
-            for transfer in self.cloud.transfer_list:
-                transfer.update(sim.now)
 
-            log.info('Calculating storage costs', self.sim.now)
-            storage_costs = {}
-            storage_costs_total = 0
-            for bucket in self.cloud.bucket_list:
-                costs = bucket.process_storage_billing(self.sim.now)
-                storage_costs[bucket.name] = costs
-                storage_costs_total += costs
-            log.info('CHF {} of storage costs'.format(storage_costs_total), self.sim.now)
-
-            log.info('Calculating network costs', self.sim.now)
-            network_costs_total = 0
-            for linkselector in self.cloud.linkselector_list:
-                costs = 0
-                #costs = linkselector.get_traffic_cost()
-                #linkselector.reset_traffic_costs()
-                network_costs_total += costs
-            log.info('CHF {} of network costs'.format(network_costs_total), self.sim.now)
+            bill = self.cloud.process_billing(self.sim.now)
+            log.info('CHF {} of storage costs'.format(bill['storage_total']), self.sim.now)
+            log.info('CHF {} of network costs'.format(bill['network_total']), self.sim.now)
 
             billing_month = (billing_month % 13) + 1
 
@@ -77,10 +60,7 @@ class CloudSimulator(BaseSim):
         while transfer.state == Transfer.TRANSFER:
             yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
             transfer.update(self.sim.now)
-            if transfer.state == Transfer.SRC_LOST:
-                pass
         transfer.end()
-        # TODO handle failed transfer
 
     def find_best_transfers(self, file, dst_bucket):
         graph = self.cloud.get_as_graph()
