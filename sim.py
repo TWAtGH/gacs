@@ -147,7 +147,7 @@ class CloudSimulator(BaseSim):
             size = random.randint(2**29, 2**32)
             out_file = self.rucio.create_file(output_name, size, self.sim.now + 3600*24*14)
             replica = self.rucio.create_replica(out_file, random.choice(self.cloud.bucket_list))
-            replica.increase(self.sim.now, size)
+            replica.rse_obj.increase_replica(out_file, self.sim.now, size)
             job.output_files.append(out_file)
 
         yield self.sim.process(self.stageout_process(job))
@@ -203,7 +203,7 @@ class CloudSimulator(BaseSim):
             total_stored += size
             f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24*7, 3600*24*14))
             replica = self.rucio.create_replica(f, random.choice(self.cloud.bucket_list))
-            replica.increase(0, size)
+            replica.rse_obj.increase_replica(f, 0, size)
 
     def simulate(self):
         self.sim.process(self.billing_process())

@@ -13,10 +13,10 @@ class StorageLink:
         return self.bandwidth / (self.active_transfers + 1)
 
 class StorageLinkSelector:
-    def __init__(self, src_region, dst_region):
+    def __init__(self, src_site, dst_site):
         self.id = next_id()
-        self.src_region = src_region
-        self.dst_region = dst_region
+        self.src_site = src_site
+        self.dst_site = dst_site
         self.total_transferred = 0
         self.network_price_chf = {0: 0.0000000, 1: 0.0000000, 1024: 0.0000000, 10240: 0.0000000}
         self.link_list = []
@@ -50,8 +50,7 @@ class StorageLinkSelector:
         return (full_bw - available_bw)
         
     def select_link(self):
-        if len(self.link_list) == 0:
-            raise RuntimeError('Need to create link before using select_link')
+        assert len(self.link_list) > 0
         best_link = self.link_list[0]
         max_available_bw = 0
         for link in self.link_list:
@@ -60,3 +59,12 @@ class StorageLinkSelector:
                 max_available_bw = bw
                 best_link = link
         return best_link
+    
+    def alloc_link(self):
+        link = self.select_link()
+        link.active_transfers += 1
+        return link
+
+    def free_link(self, link):
+        assert link.active_transfers > 0
+        link.active_transfers -= 1

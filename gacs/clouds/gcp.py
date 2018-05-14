@@ -19,15 +19,16 @@ class GoogleBucket(RucioStorageElement):
         self.storage_at_last_reset = 0
         self.storage_events = []
 
-    def on_replica_increased(self, replica, current_time, amount):
+    def increase_replica(self, file_obj, current_time, amount):
         event = [current_time, amount]
         self.storage_events.append(event)
-        super().on_replica_increased(replica, current_time, amount)
+        super().increase_replica(file_obj, current_time, amount)
 
-    def on_replica_deleted(self, replica, current_time):
-        event = [current_time, -(replica.size)]
+    def remove_replica(self, file_obj, current_time):
+        replica_obj = self.replica_by_name[file_obj.name]
+        event = [current_time, -(replica_obj.size)]
         self.storage_events.append(event)
-        super().on_replica_deleted(replica, current_time)
+        super().remove_replica(file_obj, current_time)
 
     def process_storage_billing(self, current_time):
         price = self.region_obj.storage_price_chf
@@ -45,7 +46,7 @@ class GoogleBucket(RucioStorageElement):
                 time_offset = event[0]
             used_storage_at_time += event[1]
 
-        assert used_storage_at_time == self.used_storage
+        assert used_storage_at_time == self.used_storage, '{} - {}'.format(used_storage_at_time, self.used_storage)
 
         if time_offset < current_time:
             time_diff = current_time - time_offset
@@ -72,10 +73,9 @@ class GoogleRegion:
         self.bucket_by_name = {}
 
     def create_linkselector(self, dst_region_obj):
-        linkselector = StorageLinkSelector(self, dst_region_obj)
         dst_name = dst_region_obj.name
-        if dst_name in self.linkselector_by_name:
-            raise RuntimeError('Linkselector from {} to {} already registered'.format(self.name, dst_name))
+        assert dst_name not in self.linkselector_by_name, (self.name, dst_name)
+        linkselector = StorageLinkSelector(self, dst_region_obj)
         self.linkselector_by_name[dst_name] = linkselector
         return linkselector
 
@@ -109,8 +109,7 @@ class GoogleCloud:
         return False
 
     def setup_default_regions(self):
-        if len(self.region_list):
-            raise RuntimeError('Default regions for cloud obj {} are already set'.format(self.name))
+        assert len(self.region_list) == 0, self.name
 
         self.multi_locations['asia'] = ['asia', 'asia-northeast1', 'asia-south1', 'asia-east1', 'asia-southeast1']
         self.multi_locations['europe'] = ['europe', 'europe-west1', 'europe-west2', 'europe-west3', 'europe-west4']
@@ -143,8 +142,8 @@ class GoogleCloud:
         self.create_region('australia-southeast1',      'australia-southeast1',     'Sydney',    0.02275045, 'CF63-3CCD-F6EC')
 
     def setup_default_linkselectors(self):
-        if len(self.region_list) == 0:
-            raise RuntimeError('Need regions before creating default linkselectors for cloud obj {}'.format(self.name))
+        assert len(self.region_list) > 0, self.name
+
         for src_region in self.region_list:
             for dst_region in self.region_list:
                 if src_region == dst_region:
@@ -153,10 +152,8 @@ class GoogleCloud:
                 self.linkselector_list.append(linkselector)
 
     def setup_default_networkcosts(self):
-        if len(self.region_list) == 0:
-            raise RuntimeError('Need regions before setting default network costs for cloud obj {}'.format(self.name))
-        if len(self.linkselector_list) == 0:
-            raise RuntimeError('Need linkselectors before setting default network costs for cloud obj {}'.format(self.name))
+        assert len(self.region_list) > 0, self.name
+        assert len(self.linkselector_list) > 0, self.name
 
         """
         eu - apac EF0A-B3BA-32CA 0.1121580 0.1121580 0.1028115 0.0747720
@@ -191,28 +188,36 @@ class GoogleCloud:
 
         cost_ww['southamerica-east1']['us'] = {0: 0.1121580, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
 
-        cost_tmp = deepcopy(cost_ww)
-        for k in cost_tmp:
-            for k2 in cost_tmp[k]:
-                cost_ww_k2 = cost_ww.setdefault(k2, {})
-                cost_ww_k2[k] = cost_tmp[k][k2]
-
         for linkselector in self.linkselector_list:
-            r1 = linkselector.src_region
-            r2 = linkselector.dst_region
+            r1 = linkselector.src_site
+            r2 = linkselector.dst_site
             same_loc = self.is_same_location(r1, r2)
             same_mloc = self.is_same_multi_location(r1, r2)
             if same_loc == False and same_mloc == False:
-                mr1 = mr2 = ''
-                for m in self.multi_locations:
-                    if r1.name in self.multi_locations[m]:
-                        mr1 = m
-                    if r2.name in self.multi_locations[m]:
-                        mr2 = m
-                linkselector.network_price_chf = cost_ww[mr1][mr2]
+                # 1. case: two different multi regions
+                # search both multi location names
+                mr1_name = mr2_name = ''
+                for ml_name in self.multi_locations:
+                    if r1.name in self.multi_locations[ml_name]:
+                        mr1_name = ml_name
+                    if r2.name in self.multi_locations[ml_name]:
+                        mr2_name = ml_name
+                assert len(mr1_name) and len(mr2_name), (mr1_name, mr2_name)
+
+                # determine order of multi location names for cost_ww dict
+                mr = cost_ww.get(mr1_name)
+                costs = mr.get(mr2_name)
+                if not costs:
+                    mr = cost_ww.get(mr2_name)
+                    costs = mr.get(mr1_name)
+                assert costs, (mr1_name, mr2_name)
+
+                linkselector.network_price_chf = costs
             elif same_loc:
+                # 2. case: r1 and r2 are the same region
                 linkselector.network_price_chf = cost_same_region
             else:
+                # 3. case: region r1 is inside the multi region r2
                 linkselector.network_price_chf = cost_same_multi
 
         #download apac      1F8B-71B0-3D1B 0.0000000 0.1121580 0.1028115 0.0747720
@@ -312,8 +317,7 @@ class GoogleCloud:
         return bucket
 
     def create_bucket(self, region, bucket_name, storage_type):
-        if bucket_name in self.bucket_by_name:
-            raise RuntimeError('GoogleCloud.create_bucket: bucket name {} is already registerd'.format(bucket_name))
+        assert bucket_name not in self.bucket_by_name, bucket_name
 
         region_obj = self.get_region_obj(region)
         if storage_type == GoogleBucket.TYPE_MULTI:
