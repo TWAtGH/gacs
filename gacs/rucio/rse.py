@@ -12,7 +12,7 @@ class RucioStorageElement:
 
     def create_replica(self, file_obj):
         if file_obj.name in self.replica_by_name:
-            raise NotImplemented()
+            raise NotImplementedError()
         new_replica = Replica(self, file_obj)
         self.replica_list.append(new_replica)
         self.replica_by_name[file_obj.name] = new_replica

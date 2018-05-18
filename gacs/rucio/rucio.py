@@ -4,6 +4,7 @@ import bisect
 
 from gacs.rucio.file import File
 from gacs.rucio.rse import RucioStorageElement
+from gacs.sal.transfer import Transfer
 
 import itertools
 
@@ -66,10 +67,12 @@ class Rucio:
         bisect.insort(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
         return new_file
 
-    def create_transfer(self, file, dst_rse, linkselector):
+    def create_transfer(self, file, src_rse, dst_rse):
+        src_rse = self.get_rse_obj(src_rse)
         dst_rse = self.get_rse_obj(dst_rse)
         dst_replica = self.create_replica(file, dst_rse)
-        transfer = Transfer(file, dst_replica, linkselector)
+        linkselector = src_rse.region_obj.linkselector_by_name[dst_rse.region_obj.name]
+        transfer = Transfer(file, linkselector, dst_replica)
         return transfer
 
     def create_download(self, file):

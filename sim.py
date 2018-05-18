@@ -84,7 +84,14 @@ class CloudSimulator(BaseSim):
                 return False
 
     def replica_stagein(self, job):  # create replica in cloud storage
-        yield self.sim.timeout(120) # pretend stageout
+        transfer_procs = []
+        for f in job.input_files:
+            src_rse = random.choice(f.rse_list)
+            dst_rse =  job.compute_instance.bucket_obj
+            t = self.rucio.create_transfer(f, src_rse, dst_rse)
+            transfer_procs.append(self.sim.process(self.transfer_process(t)))
+
+        yield self.sim.all_of(transfer_procs)
 
     def stagein_process(self, job):
         log = self.logger.getChild('job_proc')
@@ -209,7 +216,7 @@ class CloudSimulator(BaseSim):
         self.sim.process(self.billing_process())
         self.sim.process(self.job_factory())
         self.sim.process(self.reaper_process())
-        self.sim.run(until=65*24*3600)
+        self.sim.run(until=95*24*3600)
 
 from gacs.clouds.gcp import GoogleCloud
 from gacs.rucio.rucio import Rucio

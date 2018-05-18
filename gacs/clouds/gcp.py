@@ -84,6 +84,18 @@ class GoogleRegion:
         self.bucket_by_name[bucket_name] = new_bucket
         return new_bucket
 
+def sum_price_recursive(traffic, price_info, idx):
+    assert traffic >= 0, traffic
+
+    threshold = price_info[idx][0]
+    price = price_info[idx][1]
+    if idx >= 1:
+        threshold -= price_info[idx - 1][0]
+    if traffic <= threshold or (idx + 1) >= len(price_info):
+        return traffic * price
+    costs = threshold * price
+    return costs + sum_price_recursive(traffic - threshold, price_info, idx + 1)
+
 class GoogleCloud:
     def __init__(self):
         self.region_list = []
@@ -169,25 +181,24 @@ class GoogleCloud:
         na - sa   BB86-91E8-5450 0.1121580 0.1121580 0.1028115 0.0747720
         """
         # setup bucket to bucket transfer cost
-        cost_same_region    = {0: 0.0000000, 1: 0.0000000, 1024: 0.0000000, 10240: 0.0000000}
-        cost_same_multi      = {0: 0.0093465, 1: 0.0093465, 1024: 0.0093465, 10240: 0.0093465}
+        cost_same_region    = [(0, 0)]
+        cost_same_multi      = [(1, 0.0093465)]
 
         cost_ww = {'asia': {}, 'australia-southeast1': {}, 'europe': {}, 'southamerica-east1': {}, 'us': {}}
 
-        cost_ww['asia']['australia-southeast1'] = {0: 0.1775835, 1: 0.1775835, 1024: 0.1682370, 10240: 0.1401975}
-        cost_ww['asia']['europe']               = {0: 0.1121580, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
-        cost_ww['asia']['southamerica-east1']   = {0: 0.1121580, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
-        cost_ww['asia']['us']                   = {0: 0.0000000, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
+        cost_ww['asia']['australia-southeast1'] = [(1024, 0.1775835), (10240, 0.1682370), (10240, 0.1401975)]
+        cost_ww['asia']['europe']               = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
+        cost_ww['asia']['southamerica-east1']   = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
+        cost_ww['asia']['us']                   = [(1, 0.0000000), (1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
         
-        cost_ww['australia-southeast1']['europe']             = {0: 0.1775835, 1: 0.1775835, 1024: 0.1682370, 10240: 0.1401975}
-        cost_ww['australia-southeast1']['southamerica-east1'] = {0: 0.1121580, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
-        cost_ww['australia-southeast1']['us']                 = {0: 0.1775835, 1: 0.1775835, 1024: 0.1682370, 10240: 0.1401975}
+        cost_ww['australia-southeast1']['europe']             = [(1024, 0.1775835), (10240, 0.1682370), (10240, 0.1401975)]
+        cost_ww['australia-southeast1']['southamerica-east1'] = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
+        cost_ww['australia-southeast1']['us']                 = [(1024, 0.1775835), (10240, 0.1682370), (10240, 0.1401975)]
         
-        cost_ww['europe']['southamerica-east1'] = {0: 0.1121580, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
-        cost_ww['europe']['us']                 = {0: 0.0000000, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
+        cost_ww['europe']['southamerica-east1'] = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
+        cost_ww['europe']['us']                 = [(1, 0.0000000), (1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
 
-        cost_ww['southamerica-east1']['us'] = {0: 0.1121580, 1: 0.1121580, 1024: 0.1028115, 10240: 0.0747720}
-
+        cost_ww['southamerica-east1']['us'] = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
         for linkselector in self.linkselector_list:
             r1 = linkselector.src_site
             r2 = linkselector.dst_site
@@ -261,8 +272,15 @@ class GoogleCloud:
         network_costs_total = 0
         for linkselector in self.linkselector_list:
             costs = 0
-            #costs = linkselector.get_traffic_cost()
-            #linkselector.reset_traffic_costs()
+            traffic = 0
+            for link in linkselector.link_list:
+                assert link.used_traffic >= 0, link.used_traffic
+                traffic += link.used_traffic
+                link.used_traffic = 0
+
+            traffic /= 1024**3 # scale from Bytes to GiB
+            price_info = linkselector.network_price_chf
+            costs = sum_price_recursive(traffic, price_info, 0)
             network_costs_total += costs
         bill['network_total'] = network_costs_total
 
