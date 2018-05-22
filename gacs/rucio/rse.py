@@ -20,7 +20,7 @@ class RucioStorageElement:
         return new_replica
 
     def increase_replica(self, file_obj, current_time, amount):
-        assert amount > 0
+        assert amount > 0, amount
         replica_obj = self.replica_by_name[file_obj.name]
         amount = min(amount, file_obj.size - replica_obj.size)
         self.used_storage += amount

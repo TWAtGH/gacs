@@ -47,12 +47,13 @@ class Transfer:
         src_size = self.file.size
         dst_size = self.dst_replica.size
 
-        bandwidth = self.link.bandwidth / self.link.active_transfers
+        bandwidth = int(self.link.bandwidth / self.link.active_transfers)
         transferred = min(bandwidth * time_passed, src_size - dst_size)
+        assert transferred > 0, (self.state, bandwidth * time_passed, src_size - dst_size)
 
         self.dst_rse.increase_replica(self.file, current_time, transferred)
         self.link.used_traffic += transferred
-        if src_size == dst_size:
+        if src_size == self.dst_replica.size:
             self.state = self.COMPLETE
 
     def end(self, current_time):

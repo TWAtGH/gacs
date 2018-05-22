@@ -15,7 +15,7 @@ class Replica:
 
     def increase(self, current_time, amount):
         self.size += amount
-        assert self.size <= self.file.size
+        assert self.size <= self.file.size, (self.state, selft.size, self.file.size)
         if self.size == self.file.size:
             self.state = self.AVAILABLE
 

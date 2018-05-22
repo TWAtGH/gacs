@@ -10,6 +10,7 @@ from gacs.sim.basesim import BaseSim
 from gacs.rucio.replica import Replica
 from gacs.common.logging import SimLogger
 from gacs.common.utils import next_id 
+from gacs.sal.transfer import Transfer
 
 class ComputeInstance:
     def __init__(self, bucket_obj):
@@ -55,12 +56,12 @@ class CloudSimulator(BaseSim):
 
     def transfer_process(self, transfer):
         log = self.logger.getChild('transfer_proc')
-        log.debug('Starting transfer: File {} from {} to {}'.format(transfer.file.name, transfer.src_replica.rse_obj.name, transfer.dst_replica.rse_obj.name), self.sim.now)
+        log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
         transfer.begin(self.sim.now)
         while transfer.state == Transfer.TRANSFER:
             yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
             transfer.update(self.sim.now)
-        transfer.end()
+        transfer.end(self.sim.now)
 
     def find_best_transfers(self, file, dst_bucket):
         graph = self.cloud.get_as_graph()
@@ -86,8 +87,17 @@ class CloudSimulator(BaseSim):
     def replica_stagein(self, job):  # create replica in cloud storage
         transfer_procs = []
         for f in job.input_files:
-            src_rse = random.choice(f.rse_list)
             dst_rse =  job.compute_instance.bucket_obj
+            if dst_rse.name in f.rse_by_name:
+                continue
+            src_rse = random.choice(f.rse_list)
+            if dst_rse.region_obj.name == src_rse.region_obj.name:
+                continue
+            if src_rse.name == dst_rse.name and len(f.rse_list) == 1:
+                continue
+            elif len(f.rse_list) > 1:
+                while dst_rse.name == src_rse.name:
+                    src_rse = random.choice(f.rse_list)
             t = self.rucio.create_transfer(f, src_rse, dst_rse)
             transfer_procs.append(self.sim.process(self.transfer_process(t)))
 
@@ -95,7 +105,7 @@ class CloudSimulator(BaseSim):
 
     def stagein_process(self, job):
         log = self.logger.getChild('job_proc')
-        #log.debug('Staging-IN job {}: {} files'.format(job.id, len(job.input_files)), self.sim.now)
+        log.debug('Staging-IN job {}: {} files'.format(job.id, len(job.input_files)), self.sim.now)
         for f in job.input_files:
             self.rucio.download(job.compute_instance, input_files)
 
@@ -168,15 +178,14 @@ class CloudSimulator(BaseSim):
         while True:
             wait = random.randint(min_wait, max_wait)
             yield self.sim.timeout(wait)
-            log.info('Time for new jobs! Waited {}.'.format(wait), self.sim.now)
             total_file_count = len(self.rucio.file_list)
             total_region_count = len(self.cloud.region_list)
-            log.info('{} files left'.format(total_file_count))
-            assert total_file_count, 'Cannot generate jobs. No files registered.'
-            assert total_region_count, 'Cannot generate jobs. No regions registered.'
+            assert total_file_count > 0, total_file_count
+            assert total_region_count > 0, total_file_count
 
-            num_files = min(random.randint(100, 200), total_file_count)
-            input_files = random.sample(rucio.file_list, num_files)
+            num_jobs = min(random.randint(100, 200), total_file_count)
+            log.debug('{} new jobs, {} registered files, waited {}'.format(num_jobs, total_file_count, wait), self.sim.now)
+            input_files = random.sample(rucio.file_list, num_jobs)
             bucket = random.choice(self.cloud.bucket_list)
             compute_instance = ComputeInstance(bucket)
             for file in input_files:
