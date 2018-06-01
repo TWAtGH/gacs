@@ -1,9 +1,9 @@
 
-from gacs.common.utils import next_id
+from gacs.common import utils
 
 class StorageLink:
     def __init__(self, linkselector, bandwidth):
-        self.id = next_id()
+        self.id = utils.next_id()
         self.linkselector = linkselector
         self.bandwidth = bandwidth # 2**30
         self.used_traffic = 0
@@ -12,9 +12,9 @@ class StorageLink:
     def get_available_bandwidth(self):
         return self.bandwidth / (self.active_transfers + 1)
 
-class StorageLinkSelector:
+class LinkSelector:
     def __init__(self, src_site, dst_site):
-        self.id = next_id()
+        self.id = utils.next_id()
         self.src_site = src_site
         self.dst_site = dst_site
         self.total_transferred = 0
@@ -47,6 +47,7 @@ class StorageLinkSelector:
         for link in self.link_list:
             full_bw += link.bandwidth
             available_bw += link.get_available_bandwidth()
+        assert full_bw >= available_bw, (full_bw, available_bw)
         return (full_bw - available_bw)
         
     def select_link(self):

@@ -2,7 +2,7 @@
 import logging
 
 
-def setup_logging(lvl=logging.DEBUG):
+def setup_logging(lvl=logging.INFO):
     logger = logging.getLogger('gacs')
 
     logger.setLevel(lvl)

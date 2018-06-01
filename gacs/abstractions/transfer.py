@@ -1,6 +1,6 @@
 
-from gacs.common.utils import next_id
-from gacs.rucio.replica import Replica
+from gacs.common import monitoring, utils
+from gacs import grid
 
 
 class Transfer:
@@ -10,7 +10,7 @@ class Transfer:
     DELETED = 4
 
     def __init__(self, file, linkselector, dst_replica):
-        self.id = next_id()
+        self.id = utils.next_id()
         self.file = file
         self.linkselector = linkselector
         self.dst_replica = dst_replica
@@ -28,6 +28,7 @@ class Transfer:
 
     def begin(self, current_time):
         assert self.state == self.INIT
+        monitoring.OnTransferBegin(self)
         self.start_time = current_time
         self.last_update_time = current_time
         self.link = self.linkselector.alloc_link()
@@ -57,8 +58,9 @@ class Transfer:
             self.state = self.COMPLETE
 
     def end(self, current_time):
+        monitoring.OnTransferEnd(self)
         self.end_time = current_time
         self.linkselector.free_link(self.link)
         if self.state == self.COMPLETE:
-            self.dst_replica.state = Replica.AVAILABLE
-        self.file.remove_transfer(self)
+            self.dst_replica.state = grid.Replica.AVAILABLE
+            self.file.remove_transfer(self)

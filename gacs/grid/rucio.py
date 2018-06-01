@@ -2,9 +2,8 @@
 import heapq
 import bisect
 
-from gacs.rucio.file import File
-from gacs.rucio.rse import RucioStorageElement
-from gacs.sal.transfer import Transfer
+from gacs import abstractions
+from gacs.grid import File, StorageElement
 
 import itertools
 
@@ -26,7 +25,7 @@ class Rucio:
             rse_obj = self.rse_by_name.get(rse)
             if not rse_obj:
                 raise LookupError('rse name {} is not registered'.format(rse))
-        elif isinstance(rse, RucioStorageElement):
+        elif isinstance(rse, StorageElement):
             rse_obj = rse
         else:
             raise TypeError('rse must be either rse name or rse object')
@@ -71,12 +70,14 @@ class Rucio:
         src_rse = self.get_rse_obj(src_rse)
         dst_rse = self.get_rse_obj(dst_rse)
         dst_replica = self.create_replica(file, dst_rse)
-        linkselector = src_rse.region_obj.linkselector_by_name[dst_rse.region_obj.name]
-        transfer = Transfer(file, linkselector, dst_replica)
+        #TODO avoid accessing region_obj here
+        linkselector = src_rse.region_obj.linkselector_by_dst_name[dst_rse.region_obj.name]
+        transfer = abstractions.Transfer(file, linkselector, dst_replica)
         return transfer
 
-    def create_download(self, file):
-        return Download(file)
+    def create_download(self, src_replica, dst_site):
+        linkselector = src_replica.rse_obj.region_obj.linkselector_by_name[dst_site.name]
+        return abstractions.Download(src_replica, linkselector)
 
     def run_reaper_heap(self, current_time):
         num_files = len(self.file_list)

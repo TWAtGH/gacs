@@ -4,13 +4,10 @@ import random
 
 import simpy
 
-from gacs.clouds.gcp import GoogleBucket
+from gacs import abstractions, grid, sim
+from gacs.clouds import gcp
+from gacs.common import monitoring, utils
 
-from gacs.sim.basesim import BaseSim
-from gacs.rucio.replica import Replica
-from gacs.common.logging import SimLogger
-from gacs.common.utils import next_id 
-from gacs.sal.transfer import Transfer
 
 class ComputeInstance:
     def __init__(self, bucket_obj):
@@ -18,19 +15,12 @@ class ComputeInstance:
 
 class Job:
     def __init__(self, compute_instance, input_files):
-        self.id = next_id()
+        self.id = utils.next_id()
         self.compute_instance = compute_instance
         self.input_files = input_files
         self.output_files = []
-"""
-class GridSite(RucioStorageElement):
-    def __init__(self, site_name):
-        super().__init__(site_name)
 
-    def on_replica_increased(self, replica, amount):
-        super().on_replica_increased(replica, amount)
-"""
-class CloudSimulator(BaseSim):
+class CloudSimulator(sim.BaseSim):
     def __init__(self, sim, cloud, rucio):
         super().__init__()
         self.sim = sim
@@ -51,16 +41,34 @@ class CloudSimulator(BaseSim):
             bill = self.cloud.process_billing(self.sim.now)
             log.info('CHF {} of storage costs'.format(bill['storage_total']), self.sim.now)
             log.info('CHF {} of network costs'.format(bill['network_total']), self.sim.now)
+            monitoring.OnBillingDone(bill, billing_month)
 
             billing_month = (billing_month % 13) + 1
 
     def transfer_process(self, transfer):
         log = self.logger.getChild('transfer_proc')
         log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
+
         transfer.begin(self.sim.now)
-        while transfer.state == Transfer.TRANSFER:
-            yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+        yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+
+        while transfer.state == abstractions.Transfer.TRANSFER:
             transfer.update(self.sim.now)
+            yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+
+        transfer.end(self.sim.now)
+
+    def download_process(self, download):
+        log = self.logger.getChild('download_proc')
+        #log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
+
+        transfer.begin(self.sim.now)
+        yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+
+        while transfer.state == abstractions.Transfer.TRANSFER:
+            transfer.update(self.sim.now)
+            yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+
         transfer.end(self.sim.now)
 
     def find_best_transfers(self, file, dst_bucket):
@@ -87,15 +95,13 @@ class CloudSimulator(BaseSim):
     def replica_stagein(self, job):  # create replica in cloud storage
         transfer_procs = []
         for f in job.input_files:
-            dst_rse =  job.compute_instance.bucket_obj
+            dst_rse = job.compute_instance.bucket_obj
             if dst_rse.name in f.rse_by_name:
                 continue
             src_rse = random.choice(f.rse_list)
-            if dst_rse.region_obj.name == src_rse.region_obj.name:
-                continue
-            if src_rse.name == dst_rse.name and len(f.rse_list) == 1:
-                continue
-            elif len(f.rse_list) > 1:
+            if src_rse.name == dst_rse.name:
+                if len(f.rse_list) == 1:
+                    continue
                 while dst_rse.name == src_rse.name:
                     src_rse = random.choice(f.rse_list)
             t = self.rucio.create_transfer(f, src_rse, dst_rse)
@@ -103,27 +109,24 @@ class CloudSimulator(BaseSim):
 
         yield self.sim.all_of(transfer_procs)
 
+    def sort_sources(self, sources, dst_site):
+        pass
+
     def stagein_process(self, job):
         log = self.logger.getChild('job_proc')
         log.debug('Staging-IN job {}: {} files'.format(job.id, len(job.input_files)), self.sim.now)
+
         for f in job.input_files:
-            self.rucio.download(job.compute_instance, input_files)
+            dst_site = job.bucket_obj.region_obj
+            sources = self.sort_sources(f.replica_list, dst_site)
 
-            transfer_lists = self.find_best_transfers(f, job.compute_instance.bucket_obj)
-            for transfer_list in transfer_lists:
-                for src_replica in transfer_list: # TODO
-                    pass
-
-                if len(transfer_list) == 0:
-                    log.error('Stage-IN job {}: failed to find source for file {}'.format(job.id, f.name), self.sim.now)
-                    return False
-                transfer_procs = []
-                for src_replica in transfer_list:
-                    dst_bucket = job.compute_instance.bucket_obj
-                    linkselector = src_bucket.region_obj.linkselector_by_name[dst_bucket.region_obj.name]
-                    transfer = self.rucio.create_transfer(f, linkselector, src_bucket.replica_by_name[f.name], dst_bucket)
-                    transfer_procs.append(self.sim.process(self.transfer_process(transfer)))
-                yield self.sim.all_of(transfer_procs)
+            success = False
+            for src in sources:
+                download = self.rucio.create_download(src, dst_site)
+                self.sim.process(self.download_process(download))
+                if download.state == abstractions.Download.COMPLETE:
+                    success = True
+                    break
 
     def stageout_process(self, job):
         log = self.logger.getChild('job_proc')
@@ -204,8 +207,8 @@ class CloudSimulator(BaseSim):
         self.cloud.setup_default()
 
         for region in self.cloud.region_list:
-            self.cloud.create_bucket(region, 'bucket01_{}'.format(region.name), GoogleBucket.TYPE_REGIONAL)
-            self.cloud.create_bucket(region, 'bucket02_{}'.format(region.name), GoogleBucket.TYPE_REGIONAL)
+            self.cloud.create_bucket(region, 'bucket01_{}'.format(region.name), gcp.Bucket.TYPE_REGIONAL)
+            self.cloud.create_bucket(region, 'bucket02_{}'.format(region.name), gcp.Bucket.TYPE_REGIONAL)
 
         for linkselector in self.cloud.linkselector_list:
             num_links = random.randint(1,3)
@@ -227,11 +230,9 @@ class CloudSimulator(BaseSim):
         self.sim.process(self.reaper_process())
         self.sim.run(until=95*24*3600)
 
-from gacs.clouds.gcp import GoogleCloud
-from gacs.rucio.rucio import Rucio
 sim = simpy.Environment()
-cloud = GoogleCloud()
-rucio = Rucio()
+cloud = gcp.Cloud()
+rucio = grid.Rucio()
 cloud_sim = CloudSimulator(sim, cloud, rucio)
 cloud_sim.init_simulation()
 cloud_sim.simulate()

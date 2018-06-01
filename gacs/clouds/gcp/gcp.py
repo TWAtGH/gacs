@@ -1,11 +1,22 @@
 
-from copy import deepcopy
+from gacs import grid
 
-from gacs.rucio.rse import RucioStorageElement
-from gacs.sal.link_selector import StorageLinkSelector
-import gacs.common.utils
 
-class GoogleBucket(RucioStorageElement):
+class Region(grid.Site):
+    def __init__(self, region_name, location_desc, multi_locations, storage_price_chf, sku_id):
+        super().__init__(region_name, location_desc)
+
+        self.multi_locations = multi_locations
+        self.storage_price_chf = storage_price_chf
+        self.sku_id = sku_id
+
+    def create_rse(self, bucket_name, storage_type):
+        new_bucket = Bucket(self, bucket_name, storage_type)
+        self.rse_by_name[bucket_name] = new_bucket
+        return new_bucket
+
+
+class Bucket(grid.StorageElement):
     TYPE_MULTI = 1
     TYPE_REGIONAL = 2
     TYPE_NEARLINE = 3
@@ -13,6 +24,7 @@ class GoogleBucket(RucioStorageElement):
 
     def __init__(self, region_obj, bucket_name, storage_type):
         super().__init__(bucket_name)
+        assert isinstance(region_obj, Region), type(region_obj)
         self.region_obj = region_obj
         self.storage_type = storage_type
         self.time_at_last_reset = 0
@@ -46,7 +58,7 @@ class GoogleBucket(RucioStorageElement):
                 time_offset = event[0]
             used_storage_at_time += event[1]
 
-        assert used_storage_at_time == self.used_storage, '{} - {}'.format(used_storage_at_time, self.used_storage)
+        assert used_storage_at_time == self.used_storage, (used_storage_at_time, self.used_storage)
 
         if time_offset < current_time:
             time_diff = current_time - time_offset
@@ -61,29 +73,6 @@ class GoogleBucket(RucioStorageElement):
         return costs
 
 
-class GoogleRegion:
-    def __init__(self, region_name, location_desc, multi_locations, storage_price_chf, sku_id):
-        self.name = region_name
-        self.location_desc = location_desc
-        self.multi_locations = multi_locations
-        self.storage_price_chf = storage_price_chf
-        self.sku_id = sku_id
-
-        self.linkselector_by_name = {}
-        self.bucket_by_name = {}
-
-    def create_linkselector(self, dst_region_obj):
-        dst_name = dst_region_obj.name
-        assert dst_name not in self.linkselector_by_name, (self.name, dst_name)
-        linkselector = StorageLinkSelector(self, dst_region_obj)
-        self.linkselector_by_name[dst_name] = linkselector
-        return linkselector
-
-    def create_bucket(self, bucket_name, storage_type):
-        new_bucket = GoogleBucket(self, bucket_name, storage_type)
-        self.bucket_by_name[bucket_name] = new_bucket
-        return new_bucket
-
 def sum_price_recursive(traffic, price_info, idx):
     assert traffic >= 0, traffic
 
@@ -96,7 +85,7 @@ def sum_price_recursive(traffic, price_info, idx):
     costs = threshold * price
     return costs + sum_price_recursive(traffic - threshold, price_info, idx + 1)
 
-class GoogleCloud:
+class Cloud:
     def __init__(self):
         self.region_list = []
         self.region_by_name = {}
@@ -105,10 +94,8 @@ class GoogleCloud:
         self.bucket_by_name  = {}
 
         self.linkselector_list = []
-        #self.linkselector_by_id = {}
 
         self.transfer_list = []
-        #self.transfer_by_id = {}
 
         self.multi_locations = {}
 
@@ -158,8 +145,6 @@ class GoogleCloud:
 
         for src_region in self.region_list:
             for dst_region in self.region_list:
-                if src_region == dst_region:
-                    continue
                 linkselector = src_region.create_linkselector(dst_region)
                 self.linkselector_list.append(linkselector)
 
@@ -235,16 +220,6 @@ class GoogleCloud:
         #download australia 9B2D-2B7D-FA5C 0.1775835 0.1775835 0.1682370 0.1401975
         #download china     4980-950B-BDA6 0.2149695 0.2149695 0.2056230 0.1869300
         #download us emea   22EB-AAE8-FBCD 0.0000000 0.1121580 0.1028115 0.0747720
-        """
-        for linkselector in grid.rse('asia').linkselector_list:
-            linkselector.set_egress_costs(0, 0.112158, 0.1028115, 0.074772)
-        for linkselector in grid.rse('europe').linkselector_list:
-            linkselector.set_egress_costs(0, 0.112158, 0.1028115, 0.074772)
-        for linkselector in grid.rse('us').linkselector_list:
-            linkselector.set_egress_costs(0, 0.112158, 0.1028115, 0.074772)
-        for linkselector in grid.rse('sydney').linkselector_list:
-            linkselector.set_egress_costs(0.1775835, 0.168237, 0.1401975)
-        """
 
     def setup_default_operationcosts(self):
         pass
@@ -303,9 +278,8 @@ class GoogleCloud:
         return graph
 
     def create_region(self, multi_location, region_name, location_desc, storage_price_chf, sku_id):
-        # should the multi locs contain location_name????
         mul_locs = self.multi_locations[multi_location]
-        new_region = GoogleRegion(region_name, location_desc, mul_locs, storage_price_chf, sku_id)
+        new_region = Region(region_name, location_desc, mul_locs, storage_price_chf, sku_id)
         self.region_list.append(new_region)
         self.region_by_name[new_region.name] = new_region
         return new_region
@@ -316,7 +290,7 @@ class GoogleCloud:
             region_obj = self.region_by_name.get(region)
             if not region_obj:
                 raise LookupError('region name {} is not registered'.format(region))
-        elif isinstance(region, GoogleRegion):
+        elif isinstance(region, Region):
             region_obj = region
         else:
             raise TypeError('region must be either region name or region object')
@@ -328,7 +302,7 @@ class GoogleCloud:
             bucket_obj = self.bucket_by_name.get(bucket)
             if not bucket_obj:
                 raise LookupError('bucket name {} is not registered'.format(bucket))
-        elif isinstance(bucket, GoogleBucket):
+        elif isinstance(bucket, Bucket):
             bucket_obj = bucket
         else:
             raise TypeError('bucket must be either bucket name or bucket object')
@@ -338,12 +312,12 @@ class GoogleCloud:
         assert bucket_name not in self.bucket_by_name, bucket_name
 
         region_obj = self.get_region_obj(region)
-        if storage_type == GoogleBucket.TYPE_MULTI:
+        if storage_type == Bucket.TYPE_MULTI:
             region_name = region_obj.name
             if region_name not in ['asia', 'europe', 'us']: # TODO needs better solution!
-                raise RuntimeError('GoogleCloud.create_bucket: cannot create multi regional bucket in region {}'.format(region_name))
+                raise RuntimeError('create_bucket: cannot create multi regional bucket in region {}'.format(region_name))
 
-        new_bucket = region_obj.create_bucket(bucket_name, storage_type)
+        new_bucket = region_obj.create_rse(bucket_name, storage_type)
 
         self.bucket_list.append(new_bucket)
         self.bucket_by_name[bucket_name] = new_bucket

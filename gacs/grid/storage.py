@@ -1,7 +1,30 @@
 
-from gacs.rucio.replica import Replica
+from gacs import abstractions
+from gacs.grid import Replica
 
-class RucioStorageElement:
+
+class Site:
+    def __init__(self, site_name, location_desc):
+        self.name = site_name
+        self.location_desc = location_desc
+
+        self.linkselector_by_dst_name = {}
+        self.rse_by_name = {}
+
+    def create_linkselector(self, dst_site_obj):
+        dst_site_name = dst_site_obj.name
+        assert dst_site_name not in self.linkselector_by_dst_name, (self.name, dst_site_name)
+        linkselector = abstractions.LinkSelector(self, dst_site_obj)
+        self.linkselector_by_dst_name[dst_site_name] = linkselector
+        return linkselector
+
+    def create_rse(self, rse_name):
+        new_rse = StorageElement(self, rse_name)
+        self.rse_by_name[rse_name] = new_rse
+        return new_rse
+
+
+class StorageElement:
     def __init__(self, rse_name):
         self.name = rse_name
 
