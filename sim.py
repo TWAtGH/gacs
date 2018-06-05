@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import logging
 import random
+import uuid
 
 import simpy
 
@@ -29,6 +30,15 @@ class CloudSimulator(sim.BaseSim):
 
         self.TRANSFER_UPDATE_DELAY = 10
         self.DOWNLOAD_UPDATE_DELAY = 10
+
+        self.JOBFAC_WAIT_MIN = 5 * 3600
+        self.JOBFAC_WAIT_MAX = 24 * 3600
+        self.JOBFAC_NUM_MIN = 50
+        self.JOBFAC_NUM_MAX = 150
+        self.JOBFAC_INFILES_MIN = 1
+        self.JOBFAC_INFILES_MAX = 15
+
+        self.REAPER_SLEEP = 300
 
     def billing_process(self):
         log = self.logger.getChild('billing_proc')
@@ -62,167 +72,188 @@ class CloudSimulator(sim.BaseSim):
         log = self.logger.getChild('download_proc')
         #log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
 
-        transfer.begin(self.sim.now)
-        yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+        download.begin(self.sim.now)
+        yield self.sim.timeout(self.DOWNLOAD_UPDATE_DELAY)
 
-        while transfer.state == abstractions.Transfer.TRANSFER:
-            transfer.update(self.sim.now)
-            yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+        while download.state == abstractions.Download.TRANSFER:
+            download.update(self.sim.now)
+            yield self.sim.timeout(self.DOWNLOAD_UPDATE_DELAY)
 
-        transfer.end(self.sim.now)
-
-    def find_best_transfers(self, file, dst_bucket):
-        graph = self.cloud.get_as_graph()
-        sources = []
-        for src_replica in file.get_complete_replicas():
-            w = graph[src_replica.rse_obj.name][dst_bucket.name]
-            if w != 0: # w==0 means no link
-                sources.append(src_replica)
-                continue 
-        sources.sort(key=lambda k: graph[k.rse.name][dst_bucket.name])
-        return [[sources]]
-
-    def direct_copy_stagein_serial(self, job):  # copy input files directly to compute instance
-        # + compute instance costs
-        for file in job.input_files:
-            download = self.rucio.create_download(file)
-            while download.is_running():
-                download.update(self.sim.now)
-                yield self.sim.timeout(self.DOWNLOAD_UPDATE_DELAY)
-            if not download.is_successful():
-                return False
-
-    def replica_stagein(self, job):  # create replica in cloud storage
-        transfer_procs = []
-        for f in job.input_files:
-            dst_rse = job.compute_instance.bucket_obj
-            if dst_rse.name in f.rse_by_name:
-                continue
-            src_rse = random.choice(f.rse_list)
-            if src_rse.name == dst_rse.name:
-                if len(f.rse_list) == 1:
-                    continue
-                while dst_rse.name == src_rse.name:
-                    src_rse = random.choice(f.rse_list)
-            t = self.rucio.create_transfer(f, src_rse, dst_rse)
-            transfer_procs.append(self.sim.process(self.transfer_process(t)))
-
-        yield self.sim.all_of(transfer_procs)
-
-    def sort_sources(self, sources, dst_site):
-        pass
+        download.end(self.sim.now)
 
     def stagein_process(self, job):
-        log = self.logger.getChild('job_proc')
-        log.debug('Staging-IN job {}: {} files'.format(job.id, len(job.input_files)), self.sim.now)
+        log = self.logger
+        direct_copy = False
 
-        for f in job.input_files:
-            dst_site = job.bucket_obj.region_obj
-            sources = self.sort_sources(f.replica_list, dst_site)
+        copy_procs = []
+        dst_rse_obj = job.compute_instance.bucket_obj
+        for file_obj in job.input_files:
+            if not direct_copy and dst_rse_obj.name in file_obj.rse_by_name:
+                # file already exists at dst
+                continue
 
-            success = False
-            for src in sources:
-                download = self.rucio.create_download(src, dst_site)
-                self.sim.process(self.download_process(download))
-                if download.state == abstractions.Download.COMPLETE:
-                    success = True
-                    break
+            available_src_replicas = []
+            for replica_obj in file_obj.replica_list:
+                if replica_obj.state == grid.Replica.AVAILABLE:
+                    available_src_replicas.append(replica_obj)
+            #TODO: replace shuffle with replica sorting
+            random.shuffle(available_src_replicas)
+            if len(available_src_replicas) == 0:
+                log.error('Failed to stagein file: No replicas available', self.sim.now)
+                return False
+
+            src_replica_obj = available_src_replicas[0]
+            if direct_copy:
+                # WIP code; need to add proper linkselectors
+                download = self.rucio.create_download(src_replica_obj, dst_rse_obj.site_obj)
+                copy_procs.append(self.sim.process(self.download_process(download)))
+            else:
+                transfer = self.rucio.create_transfer(file_obj, src_replica_obj.rse_obj, dst_rse_obj)
+                copy_procs.append(self.sim.process(self.transfer_process(transfer)))
+
+        if len(copy_procs) > 0:
+            yield self.sim.all_of(copy_procs)
+        return True
+
+    def runpayload_process(self, job):
+        job_runtime = random.randint(1800, 36000)
+        yield self.sim.timeout(job_runtime)
+        return True
 
     def stageout_process(self, job):
-        log = self.logger.getChild('job_proc')
-        # log.debug('Staging-OUT job {}: {} files'.format(job.id, len(job.output_files)), self.sim.now)
-        transfer_procs = []
-        for f in job.output_files:
-            # linkselector = ?
-            # src_replica = ?
-            # dst_bucket = ?
-            # transfer = self.rucio.create_transfer(f, linkselector, src_replica, dst_bucket)
-            # transfer_procs.append(self.sim.process(self.transfer_process(transfer)))
-            pass
-        # yield self.sim.all_of(transfer_procs)
-        yield self.sim.timeout(120) # pretend stageout
+        dst_rse_obj = job.compute_instance.bucket_obj
+        dietime = self.sim.now + 3600*24*14
+
+        # create job output file
+        size = random.randint(2**26, 2**30)
+        file_obj = self.rucio.create_file('out_res_j{}'.format(job.id), size, dietime)
+        replica_obj = self.rucio.create_replica(file_obj, dst_rse_obj)
+        dst_rse_obj.increase_replica(file_obj, self.sim.now, size)
+        job.output_files.append(file_obj)
+
+        # create job log file
+        size = random.randint(2**21, 2**24)
+        file_obj = self.rucio.create_file('out_log_j{}'.format(job.id), size, dietime)
+        replica_obj = self.rucio.create_replica(file_obj, dst_rse_obj)
+        dst_rse_obj.increase_replica(file_obj, self.sim.now, size)
+        job.output_files.append(file_obj)
+
+        yield self.sim.timeout(300)
+        return True
 
     def job_process(self, job):
         log = self.logger.getChild('job_proc')
-        # log.debug('Started job {}'.format(job.id), self.sim.now)
-        
-        state = False
-        if True:
-            stagein_duration = self.sim.now
-            #state = yield self.sim.process(self.direct_copy_stagein_serial(job))
-            state = yield self.sim.process(self.replica_stagein(job))
-            stagein_duration = self.sim.now - stagein_duration
-            #self.add_approx_compute_costs(stagein_duration)
-        else:
-            state = yield self.sim.process(self.replica_stagein(job))
+        log.debug('Started job {}'.format(job.id), self.sim.now)
 
-        if state == False:
-            log.error('Stage-IN failed. Cannot run job {}'.format(job.id), self.sim.now)
+        stagein_duration = self.sim.now
+        success = yield self.sim.process(self.stagein_process(job))
+        if not success:
+            log.error('Stagein failed', self.sim.now)
             return False
+        stagein_duration = self.sim.now - stagein_duration
 
-        job_runtime = random.randint(1800, 36000)
-        yield self.sim.timeout(job_runtime)
-        for f in job.input_files: 
-            output_name = 'out_j{}_i{}'.format(job.id, f.name)
-            size = random.randint(2**29, 2**32)
-            out_file = self.rucio.create_file(output_name, size, self.sim.now + 3600*24*14)
-            replica = self.rucio.create_replica(out_file, random.choice(self.cloud.bucket_list))
-            replica.rse_obj.increase_replica(out_file, self.sim.now, size)
-            job.output_files.append(out_file)
+        payload_duration = self.sim.now
+        success = yield self.sim.process(self.runpayload_process(job))
+        if not success:
+            log.error('Payload failed', self.sim.now)
+            return False
+        payload_duration = self.sim.now - payload_duration
 
-        yield self.sim.process(self.stageout_process(job))
+        stageout_duration = self.sim.now
+        success = yield self.sim.process(self.stageout_process(job))
+        if not success:
+            log.error('Stageout failed', self.sim.now)
+            return False
+        stageout_duration = self.sim.now - stageout_duration
+        return True
 
     def job_factory(self):
         log = self.logger.getChild('job_factory')
         log.info('Started Job Factory!', self.sim.now)
-        min_wait = 5 * 3600
-        max_wait = 24 * 3600
 
         while True:
-            wait = random.randint(min_wait, max_wait)
+            wait = random.randint(self.JOBFAC_WAIT_MIN, self.JOBFAC_WAIT_MAX)
             yield self.sim.timeout(wait)
             total_file_count = len(self.rucio.file_list)
             total_region_count = len(self.cloud.region_list)
             assert total_file_count > 0, total_file_count
             assert total_region_count > 0, total_file_count
 
-            num_jobs = min(random.randint(100, 200), total_file_count)
+            num_jobs = min(random.randint(self.JOBFAC_NUM_MIN, self.JOBFAC_NUM_MAX), total_file_count)
             log.debug('{} new jobs, {} registered files, waited {}'.format(num_jobs, total_file_count, wait), self.sim.now)
-            input_files = random.sample(rucio.file_list, num_jobs)
-            bucket = random.choice(self.cloud.bucket_list)
-            compute_instance = ComputeInstance(bucket)
-            for file in input_files:
-                self.sim.process(self.job_process(Job(compute_instance, [file])))
+            for job_nr in range(num_jobs):
+                num_input_files = random.randint(self.JOBFAC_INFILES_MIN, self.JOBFAC_INFILES_MAX)
+                input_files = random.sample(rucio.file_list, num_input_files)
+                bucket = random.choice(self.cloud.bucket_list)
+                compute_instance = ComputeInstance(bucket)
+                for file in input_files:
+                    self.sim.process(self.job_process(Job(compute_instance, input_files)))
 
     def reaper_process(self):
         log = self.logger.getChild('reaper_process')
         log.info('Started Reaper Process!', self.sim.now)
         while True:
             num_deleted = self.rucio.run_reaper_bisect(self.sim.now)
-            yield self.sim.timeout(300)
+            #log.info('Reapered {}'.format(num_deleted), self.sim.now)
+            yield self.sim.timeout(self.REAPER_SLEEP)
 
     def init_simulation(self):
+        log = self.logger.getChild('sim_init')
         random.seed(42)
+
+        self.grid_rses = []
+        asia_site = grid.Site('ASGC', ['asia'])
+        self.grid_rses.append(asia_site.create_rse('TAIWAN_DATADISK'))
+        cern_site = grid.Site('CERN', ['europe'])
+        self.grid_rses.append(cern_site.create_rse('CERN_DATADISK'))
+        us_site = grid.Site('BNL', ['us'])
+        self.grid_rses.append(us_site.create_rse('BNL_DATADISK'))
+
 
         self.cloud.setup_default()
 
         for region in self.cloud.region_list:
+            ls = asia_site.create_linkselector(region)
+            ls.create_link(2**31)
+            ls.create_link(2**31)
+            ls = cern_site.create_linkselector(region)
+            ls.create_link(2**31)
+            ls.create_link(2**31)
+            ls = us_site.create_linkselector(region)
+            ls.create_link(2**31)
+            ls.create_link(2**31)
             self.cloud.create_bucket(region, 'bucket01_{}'.format(region.name), gcp.Bucket.TYPE_REGIONAL)
-            self.cloud.create_bucket(region, 'bucket02_{}'.format(region.name), gcp.Bucket.TYPE_REGIONAL)
+            #self.cloud.create_bucket(region, 'bucket02_{}'.format(region.name), gcp.Bucket.TYPE_REGIONAL)
 
         for linkselector in self.cloud.linkselector_list:
-            num_links = random.randint(1,3)
+            num_links = random.randint(1, 3)
             for i in range(num_links):
-                linkselector.create_link(random.randint(2**28,2**(31-num_links)))
+                linkselector.create_link(random.randint(2**28, 2**(31-num_links)))
 
-        total_stored = 0
-        import uuid
-        for i in range(10000):
-            size = random.randint(2**28, 2**32)
-            total_stored += size
-            f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24*7, 3600*24*14))
-            replica = self.rucio.create_replica(f, random.choice(self.cloud.bucket_list))
-            replica.rse_obj.increase_replica(f, 0, size)
+        total_files_stored = 10000
+        total_replicas_stored = 0
+        total_bytes_stored = 0
+        for i in range(total_files_stored):
+            size = random.randint(2**28, 2**31)
+            f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24*8, 3600*24*14))
+
+            rses = []
+            num_rses = 1
+            replication_chance = random.randint(1, 100)
+            if replication_chance < 6:
+                num_rses = 3
+            elif replication_chance < 21:
+                num_rses = 2
+
+            total_replicas_stored += num_rses
+            total_bytes_stored += size * num_rses
+            for rse_obj in random.sample(self.grid_rses, num_rses):
+                self.rucio.create_replica(f, rse_obj)
+                rse_obj.increase_replica(f, 0, size)
+
+        log.info('Created {} files with {} replicas using {} of space'.format(total_files_stored,
+                                                                              total_replicas_stored,
+                                                                              utils.sizefmt(total_bytes_stored)))
 
     def simulate(self):
         self.sim.process(self.billing_process())

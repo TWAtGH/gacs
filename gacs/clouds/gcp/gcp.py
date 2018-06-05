@@ -3,16 +3,16 @@ from gacs import grid
 
 
 class Region(grid.Site):
-    def __init__(self, region_name, location_desc, multi_locations, storage_price_chf, sku_id):
-        super().__init__(region_name, location_desc)
+    def __init__(self, name, location_desc, multi_locations, storage_price_chf, sku_id):
+        super().__init__(name, location_desc)
 
         self.multi_locations = multi_locations
         self.storage_price_chf = storage_price_chf
         self.sku_id = sku_id
 
-    def create_rse(self, bucket_name, storage_type):
-        new_bucket = Bucket(self, bucket_name, storage_type)
-        self.rse_by_name[bucket_name] = new_bucket
+    def create_rse(self, rse_name, storage_type):
+        new_bucket = Bucket(self, rse_name, storage_type)
+        self.rse_by_name[rse_name] = new_bucket
         return new_bucket
 
 
@@ -22,10 +22,9 @@ class Bucket(grid.StorageElement):
     TYPE_NEARLINE = 3
     TYPE_COLDLINE = 4
 
-    def __init__(self, region_obj, bucket_name, storage_type):
-        super().__init__(bucket_name)
+    def __init__(self, region_obj, name, storage_type):
         assert isinstance(region_obj, Region), type(region_obj)
-        self.region_obj = region_obj
+        super().__init__(region_obj, name)
         self.storage_type = storage_type
         self.time_at_last_reset = 0
         self.storage_at_last_reset = 0
@@ -43,7 +42,7 @@ class Bucket(grid.StorageElement):
         super().remove_replica(file_obj, current_time)
 
     def process_storage_billing(self, current_time):
-        price = self.region_obj.storage_price_chf
+        price = self.site_obj.storage_price_chf
         time_offset = self.time_at_last_reset
         used_storage_at_time = self.storage_at_last_reset
         costs = 0
@@ -265,11 +264,11 @@ class Cloud:
         graph = {}
         for src_bucket in self.bucket_list:
             src_name = src_bucket.name
-            src_region = src_bucket.region_obj
+            src_region = src_bucket.site_obj
             graph[src_name] = {}
             for dst_bucket in self.bucket_list:
                 dst_name = dst_bucket.name
-                dst_region = dst_bucket.region_obj
+                dst_region = dst_bucket.site_obj
                 w = 0
                 ls = src_region.linkselector_by_name.get(dst_region.name)
                 if ls != None:

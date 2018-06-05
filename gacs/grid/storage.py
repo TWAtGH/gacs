@@ -4,8 +4,8 @@ from gacs.grid import Replica
 
 
 class Site:
-    def __init__(self, site_name, location_desc):
-        self.name = site_name
+    def __init__(self, name, location_desc):
+        self.name = name
         self.location_desc = location_desc
 
         self.linkselector_by_dst_name = {}
@@ -19,14 +19,16 @@ class Site:
         return linkselector
 
     def create_rse(self, rse_name):
+        assert rse_name not in self.rse_by_name, (self.name, rse_name)
         new_rse = StorageElement(self, rse_name)
         self.rse_by_name[rse_name] = new_rse
         return new_rse
 
 
 class StorageElement:
-    def __init__(self, rse_name):
-        self.name = rse_name
+    def __init__(self, site_obj, name):
+        self.site_obj = site_obj
+        self.name = name
 
         self.used_storage = 0
 

@@ -67,16 +67,19 @@ class Rucio:
         return new_file
 
     def create_transfer(self, file, src_rse, dst_rse):
-        src_rse = self.get_rse_obj(src_rse)
-        dst_rse = self.get_rse_obj(dst_rse)
-        dst_replica = self.create_replica(file, dst_rse)
-        #TODO avoid accessing region_obj here
-        linkselector = src_rse.region_obj.linkselector_by_dst_name[dst_rse.region_obj.name]
+        src_site_obj = self.get_rse_obj(src_rse).site_obj
+        dst_rse_obj = self.get_rse_obj(dst_rse)
+        dst_site_name = dst_rse_obj.site_obj.name
+
+        linkselector = src_site_obj.linkselector_by_dst_name.get(dst_site_name)
+        assert linkselector != None, (src_site_obj.name, dst_site_name)
+
+        dst_replica = self.create_replica(file, dst_rse_obj)
         transfer = abstractions.Transfer(file, linkselector, dst_replica)
         return transfer
 
     def create_download(self, src_replica, dst_site):
-        linkselector = src_replica.rse_obj.region_obj.linkselector_by_name[dst_site.name]
+        linkselector = src_replica.rse_obj.site_obj.linkselector_by_name[dst_site.name]
         return abstractions.Download(src_replica, linkselector)
 
     def run_reaper_heap(self, current_time):

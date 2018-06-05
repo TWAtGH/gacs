@@ -5,26 +5,24 @@ from gacs import grid
 
 class Download:
     INIT = 1
-    TRANSFER = 2
-    COMPLETE = 3
-    DELETED = 4
+    RUNNING = 2
+    SUCCESS = 3
+    FAILURE = 4
 
     def __init__(self, src_replica, linkselector):
         self.id = utils.next_id()
-        self.file = file
-        self.linkselector = linkselector
-        self.dst_replica = dst_replica
-        self.dst_rse = dst_replica.rse_obj
 
-        self.start_time = 0
-        self.end_time = 0
-
+        self.start_time = None
+        self.end_time = None
         self.last_update_time = None
+
+        self.linkselector = linkselector
         self.link = None
         self.state = self.INIT
 
-    def delete(self):
-        self.state = self.DELETED
+    def abort(self):
+        assert self.state != self.SUCCESS
+        self.state = self.FAILURE
 
     def begin(self, current_time):
         assert self.state == self.INIT
