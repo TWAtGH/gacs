@@ -31,12 +31,22 @@ class CloudSimulator(sim.BaseSim):
         self.TRANSFER_UPDATE_DELAY = 10
         self.DOWNLOAD_UPDATE_DELAY = 10
 
+        self.DATAGEN_WAIT_MIN = 7 * 24 * 3600
+        self.DATAGEN_WAIT_MAX = 7 * 24 * 3600
+        self.DATAGEN_FILES_NUM_MIN = 15000
+        self.DATAGEN_FILES_NUM_MAX = 15000
+        self.DATAGEN_FILES_SIZE_MIN = 2**27
+        self.DATAGEN_FILES_SIZE_MAX = 2**31
+        self.DATAGEN_LIFETIME_MIN = 7 * 24 * 3600
+        self.DATAGEN_LIFETIME_MAX = 14 * 24 * 3600
+        self.DATAGEN_REPLICATION_PERCENT = [0.18, 0.69, 0.13]
+
         self.JOBFAC_WAIT_MIN = 5 * 3600
         self.JOBFAC_WAIT_MAX = 24 * 3600
-        self.JOBFAC_NUM_MIN = 50
-        self.JOBFAC_NUM_MAX = 150
-        self.JOBFAC_INFILES_MIN = 1
-        self.JOBFAC_INFILES_MAX = 15
+        self.JOBFAC_JOB_NUM_MIN = 50
+        self.JOBFAC_JOB_NUM_MAX = 150
+        self.JOBFAC_INFILES_NUM_MIN = 1
+        self.JOBFAC_INFILES_NUM_MAX = 15
 
         self.REAPER_SLEEP = 300
 
@@ -54,6 +64,29 @@ class CloudSimulator(sim.BaseSim):
             monitoring.OnBillingDone(bill, billing_month)
 
             billing_month = (billing_month % 13) + 1
+
+    def generate_grid_data(self, cur_time):
+        total_files_stored = random.randint(self.DATAGEN_FILES_NUM_MIN, self.DATAGEN_FILES_NUM_MAX)
+        total_replicas_stored = 0
+        total_bytes_stored = 0
+        max_num_replicas = len(self.DATAGEN_REPLICATION_PERCENT)
+        assert num_replicas > len(self.grid_rses), (num_replicas, len(self.grid_rses))
+        for num_replicas in range(max_num_replicas):
+            file_gen_num = total_file_gen_num * self.DATAGEN_REPLICATION_PERCENT[num_replicas]
+            total_replicas_stored += file_gen_num * num_replicas
+            for i in range(file_gen_num):
+                size = random.randint(self.DATAGEN_FILES_SIZE_MIN, self.DATAGEN_FILES_SIZE_MAX)
+                dietime = cur_time + random.randint(self.DATAGEN_LIFETIME_MIN, self.DATAGEN_LIFETIME_MAX)
+                f = self.rucio.create_file(str(uuid.uuid4()), size, dietime)
+
+                total_bytes_stored += size * num_replicas
+                for rse_obj in random.sample(self.grid_rses, num_replicas):
+                    self.rucio.create_replica(f, rse_obj)
+                    rse_obj.increase_replica(f, 0, size)
+
+        log.info('Created {} files with {} replicas using {} of space'.format(total_files_stored,
+                                                                              total_replicas_stored,
+                                                                              utils.sizefmt(total_bytes_stored)))
 
     def transfer_process(self, transfer):
         log = self.logger.getChild('transfer_proc')
@@ -179,10 +212,10 @@ class CloudSimulator(sim.BaseSim):
             assert total_file_count > 0, total_file_count
             assert total_region_count > 0, total_file_count
 
-            num_jobs = min(random.randint(self.JOBFAC_NUM_MIN, self.JOBFAC_NUM_MAX), total_file_count)
+            num_jobs = min(random.randint(self.JOBFAC_JOB_NUM_MIN, self.JOBFAC_JOB_NUM_MAX), total_file_count)
             log.debug('{} new jobs, {} registered files, waited {}'.format(num_jobs, total_file_count, wait), self.sim.now)
             for job_nr in range(num_jobs):
-                num_input_files = random.randint(self.JOBFAC_INFILES_MIN, self.JOBFAC_INFILES_MAX)
+                num_input_files = random.randint(self.JOBFAC_INFILES_NUM_MIN, self.JOBFAC_INFILES_NUM_MAX)
                 input_files = random.sample(rucio.file_list, num_input_files)
                 bucket = random.choice(self.cloud.bucket_list)
                 compute_instance = ComputeInstance(bucket)
@@ -257,6 +290,7 @@ class CloudSimulator(sim.BaseSim):
 
     def simulate(self):
         self.sim.process(self.billing_process())
+        self.sim.process(self.data_generation_process())
         self.sim.process(self.job_factory())
         self.sim.process(self.reaper_process())
         self.sim.run(until=95*24*3600)
