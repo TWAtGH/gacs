@@ -28,12 +28,12 @@ class Transfer:
 
     def begin(self, current_time):
         assert self.state == self.INIT
-        monitoring.OnTransferBegin(self)
         self.start_time = current_time
         self.last_update_time = current_time
         self.link = self.linkselector.alloc_link()
         self.state = self.TRANSFER
         self.file.add_transfer(self)
+        monitoring.OnTransferBegin(self)
 
     def update(self, current_time):
         assert self.state == self.TRANSFER, self.state
@@ -58,9 +58,13 @@ class Transfer:
             self.state = self.COMPLETE
 
     def end(self, current_time):
-        monitoring.OnTransferEnd(self)
         self.end_time = current_time
         self.linkselector.free_link(self.link)
         if self.state == self.COMPLETE:
-            self.dst_replica.state = grid.Replica.AVAILABLE
             self.file.remove_transfer(self)
+        monitoring.OnTransferEnd(self)
+
+    def start_transafer(self):
+        pass
+    def end_transfer(self):
+        pass

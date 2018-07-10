@@ -28,6 +28,15 @@ class CloudSimulator(sim.BaseSim):
         self.cloud = cloud
         self.rucio = rucio
 
+        self.INIT_GRIDLINKS_NUM_MIN = 1
+        self.INIT_GRIDLINKS_NUM_MAX = 1
+        self.INIT_GRIDLINKS_BW_EXPO_MIN = 28
+        self.INIT_GRIDLINKS_BW_EXPO_MAX = 30
+        self.INIT_CLOUDLINKS_NUM_MIN = 1
+        self.INIT_CLOUDLINKS_NUM_MAX = 1
+        self.INIT_CLOUDLINKS_BW_EXPO_MIN = 28
+        self.INIT_CLOUDLINKS_BW_EXPO_MAX = 30
+
         self.TRANSFER_UPDATE_DELAY = 10
         self.DOWNLOAD_UPDATE_DELAY = 10
 
@@ -39,14 +48,14 @@ class CloudSimulator(sim.BaseSim):
         self.DATAGEN_FILES_SIZE_MAX = 2**31
         self.DATAGEN_LIFETIME_MIN = 7 * 24 * 3600
         self.DATAGEN_LIFETIME_MAX = 14 * 24 * 3600
-        self.DATAGEN_REPLICATION_PERCENT = [0.18, 0.69, 0.13]
+        self.DATAGEN_REPLICATION_PERCENT = [0.15, 0.80, 0.05]
 
-        self.JOBFAC_WAIT_MIN = 5 * 3600
-        self.JOBFAC_WAIT_MAX = 24 * 3600
-        self.JOBFAC_JOB_NUM_MIN = 50
-        self.JOBFAC_JOB_NUM_MAX = 150
+        self.JOBFAC_WAIT_MIN = 6 * 3600 #5 * 3600
+        self.JOBFAC_WAIT_MAX = 18 * 3600 #24 * 3600
+        self.JOBFAC_JOB_NUM_MIN = 150
+        self.JOBFAC_JOB_NUM_MAX = 300
         self.JOBFAC_INFILES_NUM_MIN = 1
-        self.JOBFAC_INFILES_NUM_MAX = 15
+        self.JOBFAC_INFILES_NUM_MAX = 40
 
         self.REAPER_SLEEP = 300
 
@@ -59,34 +68,38 @@ class CloudSimulator(sim.BaseSim):
             log.info('BILLING TIME FOR MONTH {}!'.format(billing_month), self.sim.now)
 
             bill = self.cloud.process_billing(self.sim.now)
-            log.info('CHF {} of storage costs'.format(bill['storage_total']), self.sim.now)
-            log.info('CHF {} of network costs'.format(bill['network_total']), self.sim.now)
+            log.info('CHF {:,.2f} of storage costs'.format(bill['storage_total']), self.sim.now)
+            log.info('CHF {:,.2f} of network costs'.format(bill['network_total']), self.sim.now)
             monitoring.OnBillingDone(bill, billing_month)
 
             billing_month = (billing_month % 13) + 1
 
     def generate_grid_data(self, cur_time):
-        total_files_stored = random.randint(self.DATAGEN_FILES_NUM_MIN, self.DATAGEN_FILES_NUM_MAX)
-        total_replicas_stored = 0
-        total_bytes_stored = 0
+        log = self.logger.getChild('datagen')
+        total_files_gen = random.randint(self.DATAGEN_FILES_NUM_MIN, self.DATAGEN_FILES_NUM_MAX)
+        total_replicas_gen = 0
+        total_bytes_gen = 0
         max_num_replicas = len(self.DATAGEN_REPLICATION_PERCENT)
-        assert num_replicas > len(self.grid_rses), (num_replicas, len(self.grid_rses))
-        for num_replicas in range(max_num_replicas):
-            file_gen_num = total_file_gen_num * self.DATAGEN_REPLICATION_PERCENT[num_replicas]
-            total_replicas_stored += file_gen_num * num_replicas
-            for i in range(file_gen_num):
+        assert max_num_replicas <= len(self.grid_rses), (max_num_replicas, len(self.grid_rses))
+        for num_replicas_idx in range(max_num_replicas):
+            num_replicas = num_replicas_idx + 1
+            num_files_gen = int(total_files_gen * self.DATAGEN_REPLICATION_PERCENT[num_replicas_idx])
+            bytes_without_num_replicas = 0
+            for i in range(num_files_gen):
                 size = random.randint(self.DATAGEN_FILES_SIZE_MIN, self.DATAGEN_FILES_SIZE_MAX)
                 dietime = cur_time + random.randint(self.DATAGEN_LIFETIME_MIN, self.DATAGEN_LIFETIME_MAX)
                 f = self.rucio.create_file(str(uuid.uuid4()), size, dietime)
 
-                total_bytes_stored += size * num_replicas
+                bytes_without_num_replicas += size
                 for rse_obj in random.sample(self.grid_rses, num_replicas):
                     self.rucio.create_replica(f, rse_obj)
                     rse_obj.increase_replica(f, 0, size)
+            total_bytes_gen += bytes_without_num_replicas * num_replicas
+            total_replicas_gen += num_files_gen * num_replicas
 
-        log.info('Created {} files with {} replicas using {} of space'.format(total_files_stored,
-                                                                              total_replicas_stored,
-                                                                              utils.sizefmt(total_bytes_stored)))
+        log.info('Created {} files with {} replicas using {} of space'.format(total_files_gen,
+                                                                              total_replicas_gen,
+                                                                              utils.sizefmt(total_bytes_gen)), cur_time)
 
     def transfer_process(self, transfer):
         log = self.logger.getChild('transfer_proc')
@@ -200,9 +213,9 @@ class CloudSimulator(sim.BaseSim):
         stageout_duration = self.sim.now - stageout_duration
         return True
 
-    def job_factory(self):
-        log = self.logger.getChild('job_factory')
-        log.info('Started Job Factory!', self.sim.now)
+    def job_gen_process(self):
+        log = self.logger.getChild('job_gen_process')
+        log.info('Started job generation process!', self.sim.now)
 
         while True:
             wait = random.randint(self.JOBFAC_WAIT_MIN, self.JOBFAC_WAIT_MAX)
@@ -222,9 +235,18 @@ class CloudSimulator(sim.BaseSim):
                 for file in input_files:
                     self.sim.process(self.job_process(Job(compute_instance, input_files)))
 
+    def grid_data_gen_process(self):
+        log = self.logger.getChild('grid_data_gen_process')
+        log.info('Started grid data generation process!', self.sim.now)
+
+        while True:
+            self.generate_grid_data(self.sim.now)
+            wait = random.randint(self.DATAGEN_WAIT_MIN, self.DATAGEN_WAIT_MAX)
+            yield self.sim.timeout(wait)
+
     def reaper_process(self):
         log = self.logger.getChild('reaper_process')
-        log.info('Started Reaper Process!', self.sim.now)
+        log.info('Started Reaper process!', self.sim.now)
         while True:
             num_deleted = self.rucio.run_reaper_bisect(self.sim.now)
             #log.info('Reapered {}'.format(num_deleted), self.sim.now)
@@ -242,56 +264,43 @@ class CloudSimulator(sim.BaseSim):
         us_site = grid.Site('BNL', ['us'])
         self.grid_rses.append(us_site.create_rse('BNL_DATADISK'))
 
-
         self.cloud.setup_default()
 
         for region in self.cloud.region_list:
             ls = asia_site.create_linkselector(region)
-            ls.create_link(2**31)
-            ls.create_link(2**31)
+            num_links = random.randint(self.INIT_GRIDLINKS_NUM_MIN, self.INIT_GRIDLINKS_NUM_MAX)
+            for i in range(num_links):
+                min_bw = 2**self.INIT_GRIDLINKS_BW_EXPO_MIN
+                max_bw = 2**(self.INIT_GRIDLINKS_BW_EXPO_MAX - i)
+                ls.create_link(random.randint(min_bw, max(min_bw, max_bw)))
+
             ls = cern_site.create_linkselector(region)
-            ls.create_link(2**31)
-            ls.create_link(2**31)
+            num_links = random.randint(self.INIT_GRIDLINKS_NUM_MIN, self.INIT_GRIDLINKS_NUM_MAX)
+            for i in range(num_links):
+                min_bw = 2**self.INIT_GRIDLINKS_BW_EXPO_MIN
+                max_bw = 2**(self.INIT_GRIDLINKS_BW_EXPO_MAX - i)
+                ls.create_link(random.randint(min_bw, max(min_bw, max_bw)))
+
             ls = us_site.create_linkselector(region)
-            ls.create_link(2**31)
-            ls.create_link(2**31)
+            num_links = random.randint(self.INIT_GRIDLINKS_NUM_MIN, self.INIT_GRIDLINKS_NUM_MAX)
+            for i in range(num_links):
+                min_bw = 2**self.INIT_GRIDLINKS_BW_EXPO_MIN
+                max_bw = 2**(self.INIT_GRIDLINKS_BW_EXPO_MAX - i)
+                ls.create_link(random.randint(min_bw, max(min_bw, max_bw)))
             self.cloud.create_bucket(region, 'bucket01_{}'.format(region.name), gcp.Bucket.TYPE_REGIONAL)
             #self.cloud.create_bucket(region, 'bucket02_{}'.format(region.name), gcp.Bucket.TYPE_REGIONAL)
 
-        for linkselector in self.cloud.linkselector_list:
-            num_links = random.randint(1, 3)
+        for ls in self.cloud.linkselector_list:
+            num_links = random.randint(self.INIT_CLOUDLINKS_NUM_MIN, self.INIT_CLOUDLINKS_NUM_MAX)
             for i in range(num_links):
-                linkselector.create_link(random.randint(2**28, 2**(31-num_links)))
-
-        total_files_stored = 10000
-        total_replicas_stored = 0
-        total_bytes_stored = 0
-        for i in range(total_files_stored):
-            size = random.randint(2**28, 2**31)
-            f = self.rucio.create_file(str(uuid.uuid4()), size, random.randint(3600*24*8, 3600*24*14))
-
-            rses = []
-            num_rses = 1
-            replication_chance = random.randint(1, 100)
-            if replication_chance < 6:
-                num_rses = 3
-            elif replication_chance < 21:
-                num_rses = 2
-
-            total_replicas_stored += num_rses
-            total_bytes_stored += size * num_rses
-            for rse_obj in random.sample(self.grid_rses, num_rses):
-                self.rucio.create_replica(f, rse_obj)
-                rse_obj.increase_replica(f, 0, size)
-
-        log.info('Created {} files with {} replicas using {} of space'.format(total_files_stored,
-                                                                              total_replicas_stored,
-                                                                              utils.sizefmt(total_bytes_stored)))
+                min_bw = 2**self.INIT_CLOUDLINKS_BW_EXPO_MIN
+                max_bw = 2**(self.INIT_CLOUDLINKS_BW_EXPO_MAX - i)
+                ls.create_link(random.randint(min_bw, max(min_bw, max_bw)))
 
     def simulate(self):
         self.sim.process(self.billing_process())
-        self.sim.process(self.data_generation_process())
-        self.sim.process(self.job_factory())
+        self.sim.process(self.grid_data_gen_process())
+        self.sim.process(self.job_gen_process())
         self.sim.process(self.reaper_process())
         self.sim.run(until=95*24*3600)
 
@@ -301,3 +310,4 @@ rucio = grid.Rucio()
 cloud_sim = CloudSimulator(sim, cloud, rucio)
 cloud_sim.init_simulation()
 cloud_sim.simulate()
+monitoring.plotIt()

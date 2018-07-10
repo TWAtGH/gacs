@@ -1,31 +1,91 @@
+from gacs import abstractions
+from gacs.common import utils
+
+data = None
+class MonitoringData:
+    def __init__(self):
+        self.costs_storage = []
+        self.costs_network = []
+        self.transfer_num_completed = 0
+        self.transfer_num_deleted = 0
+        self.transfer_duration = []
+        self.transfer_size = []
+
+
+def init():
+    global data
+    data = MonitoringData()
 
 
 def OnDownloadBegin(download):
     pass
 
+
 def OnDownloadEnd(download):
     pass
+
 
 def OnUploadBegin(upload):
     pass
 
+
 def OnUploadEnd(upload):
     pass
+
 
 def OnTransferBegin(transfer):
     pass
 
+
 def OnTransferEnd(transfer):
-    pass
+    if transfer.state == abstractions.Transfer.COMPLETE:
+        data.transfer_num_completed += 1
+    elif transfer.state == abstractions.Transfer.DELETED:
+        data.transfer_num_deleted += 1
+    data.transfer_duration.append(transfer.end_time - transfer.start_time)
+    data.transfer_size.append(transfer.file.size)
+
 
 def OnFileDeletion(file):
     pass
 
+
 def OnCreateTransferGridToCloud(transfer):
     pass
+
 
 def OnCreateTransferCloudToCloud(transfer):
     pass
 
+
 def OnBillingDone(bill, month):
-    pass
+    data.costs_storage.append(bill['storage_total'])
+    data.costs_network.append(bill['network_total'])
+
+
+def plotIt():
+    import matplotlib.pyplot as plt
+    import statistics
+    print('NumComplete:    {:,d}'.format(data.transfer_num_completed))
+    print('NumDeleted:     {:,d}'.format(data.transfer_num_deleted))
+    min_transfer = utils.sizefmt(min(data.transfer_size))
+    max_transfer = utils.sizefmt(max(data.transfer_size))
+    avg_transfer = statistics.mean(data.transfer_size)
+    print('MinTransferred: {}'.format(min_transfer))
+    print('MaxTransferred: {}'.format(max_transfer))
+    print('AvgTransferred: {}'.format(utils.sizefmt(avg_transfer)))
+    min_duration = min(data.transfer_duration)
+    max_duration = max(data.transfer_duration)
+    print('MinDuration:    {}'.format(min_duration))
+    print('MaxDuration:    {}'.format(max_duration))
+    print('AvgDuration:    {:,.2f}'.format(statistics.mean(data.transfer_duration)))
+
+    plt.figure(1)
+    plt.plot(data.costs_storage, label='storage costs')
+    plt.plot(data.costs_network, label='newtork costs')
+    plt.ylabel('costs/CHF')
+    plt.xlabel('time/month')
+
+    #plt.figure(2)
+
+    plt.show()
