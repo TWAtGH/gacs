@@ -1,6 +1,8 @@
 from gacs import abstractions
 from gacs.common import utils
 
+import time
+
 data = None
 class MonitoringData:
     def __init__(self):
@@ -10,6 +12,8 @@ class MonitoringData:
         self.transfer_num_deleted = 0
         self.transfer_duration = []
         self.transfer_size = []
+        self.transfer_history_count = []
+        self.deletion_time_start = 0
 
 
 def init():
@@ -63,6 +67,18 @@ def OnBillingDone(bill, month):
     data.costs_network.append(bill['network_total'])
 
 
+def OnPreReaper(current_time):
+    data.deletion_time_start = time.time()
+
+
+def OnPostReaper(current_time, num_deleted):
+    if num_deleted > 0:
+        deletion_duration = time.time() - data.deletion_time_start
+        #print('Deleted {} files in {:.2f}s'.format(num_deleted, deletion_duration))
+
+def OnMonitorTransfer(current_time, num_active_transfers):
+    data.transfer_history_count.append(num_active_transfers)
+
 def plotIt():
     import matplotlib.pyplot as plt
     import statistics
@@ -86,6 +102,9 @@ def plotIt():
     plt.ylabel('costs/CHF')
     plt.xlabel('time/month')
 
-    #plt.figure(2)
+    plt.figure(2)
+    plt.plot(data.transfer_history_count, label='active transfers')
+    plt.ylabel('count')
+    plt.xlabel('time')
 
     plt.show()

@@ -41,6 +41,7 @@ class Transfer:
 
         time_passed = current_time - self.last_update_time
         assert time_passed > 0, (current_time, self.last_update_time, time_passed)
+        self.last_update_time = current_time
 
         self.linkselector.free_link(self.link)
         self.link = self.linkselector.alloc_link()
@@ -63,8 +64,3 @@ class Transfer:
         if self.state == self.COMPLETE:
             self.file.remove_transfer(self)
         monitoring.OnTransferEnd(self)
-
-    def start_transafer(self):
-        pass
-    def end_transfer(self):
-        pass

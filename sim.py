@@ -9,6 +9,15 @@ from gacs import abstractions, grid, sim
 from gacs.clouds import gcp
 from gacs.common import monitoring, utils
 
+class TransferDurationGeneratorJJ:
+    def __init__(self):
+        self.rate = 27 * (2**20)
+        self.overhead = 18
+
+    def get_duration(self, transfer):
+        size = transfer.file.size
+        trf_rate = size / ((size/self.rate)+self.overhead)
+        return (size / trf_rate)
 
 class ComputeInstance:
     def __init__(self, bucket_obj):
@@ -28,23 +37,25 @@ class CloudSimulator(sim.BaseSim):
         self.cloud = cloud
         self.rucio = rucio
 
+        self.num_active_transfers = 0
+
         self.INIT_GRIDLINKS_NUM_MIN = 1
         self.INIT_GRIDLINKS_NUM_MAX = 1
-        self.INIT_GRIDLINKS_BW_EXPO_MIN = 28
-        self.INIT_GRIDLINKS_BW_EXPO_MAX = 30
+        self.INIT_GRIDLINKS_BW_EXPO_MIN = 27
+        self.INIT_GRIDLINKS_BW_EXPO_MAX = 29
         self.INIT_CLOUDLINKS_NUM_MIN = 1
         self.INIT_CLOUDLINKS_NUM_MAX = 1
-        self.INIT_CLOUDLINKS_BW_EXPO_MIN = 28
-        self.INIT_CLOUDLINKS_BW_EXPO_MAX = 30
+        self.INIT_CLOUDLINKS_BW_EXPO_MIN = 27
+        self.INIT_CLOUDLINKS_BW_EXPO_MAX = 29
 
-        self.TRANSFER_UPDATE_DELAY = 10
+        self.TRANSFER_UPDATE_DELAY = 20
         self.DOWNLOAD_UPDATE_DELAY = 10
 
         self.DATAGEN_WAIT_MIN = 7 * 24 * 3600
         self.DATAGEN_WAIT_MAX = 7 * 24 * 3600
         self.DATAGEN_FILES_NUM_MIN = 15000
         self.DATAGEN_FILES_NUM_MAX = 15000
-        self.DATAGEN_FILES_SIZE_MIN = 2**27
+        self.DATAGEN_FILES_SIZE_MIN = 2**28
         self.DATAGEN_FILES_SIZE_MAX = 2**31
         self.DATAGEN_LIFETIME_MIN = 7 * 24 * 3600
         self.DATAGEN_LIFETIME_MAX = 14 * 24 * 3600
@@ -52,12 +63,16 @@ class CloudSimulator(sim.BaseSim):
 
         self.JOBFAC_WAIT_MIN = 6 * 3600 #5 * 3600
         self.JOBFAC_WAIT_MAX = 18 * 3600 #24 * 3600
-        self.JOBFAC_JOB_NUM_MIN = 150
-        self.JOBFAC_JOB_NUM_MAX = 300
+        self.JOBFAC_JOB_NUM_MIN = 100
+        self.JOBFAC_JOB_NUM_MAX = 150
         self.JOBFAC_INFILES_NUM_MIN = 1
-        self.JOBFAC_INFILES_NUM_MAX = 40
+        self.JOBFAC_INFILES_NUM_MAX = 20
 
-        self.REAPER_SLEEP = 300
+        self.REAPER_WAIT = 300
+
+        self.MONITORING_TRANSFER_WAIT = 5
+
+        self.SIM_DURATION = 65*24*3600
 
     def billing_process(self):
         log = self.logger.getChild('billing_proc')
@@ -106,12 +121,13 @@ class CloudSimulator(sim.BaseSim):
         log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
 
         transfer.begin(self.sim.now)
+        self.num_active_transfers += 1
         yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
 
         while transfer.state == abstractions.Transfer.TRANSFER:
             transfer.update(self.sim.now)
             yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
-
+        self.num_active_transfers -= 1
         transfer.end(self.sim.now)
 
     def download_process(self, download):
@@ -213,6 +229,72 @@ class CloudSimulator(sim.BaseSim):
         stageout_duration = self.sim.now - stageout_duration
         return True
 
+    def job_process2(self, job):
+        log = self.logger.getChild('job_proc')
+        log.debug('Started job {}'.format(job.id), self.sim.now)
+
+        # STAGE-IN
+        stagein_duration = self.sim.now
+        direct_copy = False
+        copy_procs = []
+        dst_rse_obj = job.compute_instance.bucket_obj
+        for file_obj in job.input_files:
+            if not direct_copy and dst_rse_obj.name in file_obj.rse_by_name:
+                # file already exists at dst
+                continue
+
+            available_src_replicas = []
+            for replica_obj in file_obj.replica_list:
+                if replica_obj.state == grid.Replica.AVAILABLE:
+                    available_src_replicas.append(replica_obj)
+            #TODO: replace shuffle with replica sorting
+            random.shuffle(available_src_replicas)
+            if len(available_src_replicas) == 0:
+                log.error('Failed to stagein file: No replicas available', self.sim.now)
+                return False
+
+            src_replica_obj = available_src_replicas[0]
+            if direct_copy:
+                # WIP code; need to add proper linkselectors
+                download = self.rucio.create_download(src_replica_obj, dst_rse_obj.site_obj)
+                copy_procs.append(self.sim.process(self.download_process(download)))
+            else:
+                transfer = self.rucio.create_transfer(file_obj, src_replica_obj.rse_obj, dst_rse_obj)
+                copy_procs.append(self.sim.process(self.transfer_process(transfer)))
+
+        if len(copy_procs) > 0:
+            yield self.sim.all_of(copy_procs)
+        stagein_duration = self.sim.now - stagein_duration
+
+        # PAYLOAD
+        payload_duration = self.sim.now
+        job_runtime = random.randint(600, 2*3600)
+        yield self.sim.timeout(job_runtime)
+        payload_duration = self.sim.now - payload_duration
+
+        # STAGE-OUT
+        stageout_duration = self.sim.now
+        dst_rse_obj = job.compute_instance.bucket_obj
+        dietime = self.sim.now + 3600*24*7
+
+        # create job output file
+        size = random.randint(2**26, 2**30)
+        file_obj = self.rucio.create_file('out_res_j{}'.format(job.id), size, dietime)
+        replica_obj = self.rucio.create_replica(file_obj, dst_rse_obj)
+        dst_rse_obj.increase_replica(file_obj, self.sim.now, size)
+        job.output_files.append(file_obj)
+
+        # create job log file
+        size = random.randint(2**21, 2**24)
+        file_obj = self.rucio.create_file('out_log_j{}'.format(job.id), size, dietime)
+        replica_obj = self.rucio.create_replica(file_obj, dst_rse_obj)
+        dst_rse_obj.increase_replica(file_obj, self.sim.now, size)
+        job.output_files.append(file_obj)
+        yield self.sim.timeout(300)
+        stageout_duration = self.sim.now - stageout_duration
+
+        return True
+
     def job_gen_process(self):
         log = self.logger.getChild('job_gen_process')
         log.info('Started job generation process!', self.sim.now)
@@ -233,7 +315,33 @@ class CloudSimulator(sim.BaseSim):
                 bucket = random.choice(self.cloud.bucket_list)
                 compute_instance = ComputeInstance(bucket)
                 for file in input_files:
-                    self.sim.process(self.job_process(Job(compute_instance, input_files)))
+                    self.sim.process(self.job_process2(Job(compute_instance, input_files)))
+
+    def transfer_gen_process(self):
+        log = self.logger.getChild('transfer_gen_process')
+        log.info('Started transfer generation process!', self.sim.now)
+
+        while True:
+            wait = random.randint(self.TRANSFERFAC_WAIT_MIN, self.TRANSFERFAC_WAIT_MAX)
+            # generate grid -> cloud
+            num_transfers = random.randint(self.TRANSFERFAC_G2C_NUM_MIN, self.TRANSFERFAC_G2C_NUM_MAX)
+            num_transfers_per_rse = max(1, int(num_transfers / len(self.grid_rses)))  # assuming uniform distribution
+            total_transfers_created = 0
+            for rse_obj in self.grid_rses:
+                num_files = min(len(rse_obj.replica_list), num_transfers_per_rse)
+                if (num_files + total_transfers_created) > num_transfers:
+                    num_files = num_transfers - total_transfers_created
+                if num_files <= 0:
+                    continue
+                total_transfers_created += num_files
+                files = random.sample(rse_obj.replica_list, num_files)
+
+
+            # generate cloud -> cloud
+                # 1. same multi regional location
+                # 2. between multi regional locations
+            # generate cloud -> else
+            yield self.sim.timeout(wait)
 
     def grid_data_gen_process(self):
         log = self.logger.getChild('grid_data_gen_process')
@@ -248,13 +356,25 @@ class CloudSimulator(sim.BaseSim):
         log = self.logger.getChild('reaper_process')
         log.info('Started Reaper process!', self.sim.now)
         while True:
+            monitoring.OnPreReaper(self.sim.now)
             num_deleted = self.rucio.run_reaper_bisect(self.sim.now)
+            monitoring.OnPostReaper(self.sim.now, num_deleted)
             #log.info('Reapered {}'.format(num_deleted), self.sim.now)
-            yield self.sim.timeout(self.REAPER_SLEEP)
+            yield self.sim.timeout(self.REAPER_WAIT)
+
+    def monitoring_transfer_process(self):
+        log = self.logger.getChild('monitoring_transfer_process')
+        log.info('Started Monitoring-Transfer process!', self.sim.now)
+        while True:
+            monitoring.OnMonitorTransfer(self.sim.now, self.num_active_transfers)
+            yield self.sim.timeout(self.MONITORING_TRANSFER_WAIT)
+
 
     def init_simulation(self):
         log = self.logger.getChild('sim_init')
         random.seed(42)
+
+        self.transfer_duration_generator = TransferDurationGeneratorJJ()
 
         self.grid_rses = []
         asia_site = grid.Site('ASGC', ['asia'])
@@ -300,9 +420,11 @@ class CloudSimulator(sim.BaseSim):
     def simulate(self):
         self.sim.process(self.billing_process())
         self.sim.process(self.grid_data_gen_process())
-        self.sim.process(self.job_gen_process())
+        #self.sim.process(self.job_gen_process())
+        self.sim.process(self.transfer_gen_process())
         self.sim.process(self.reaper_process())
-        self.sim.run(until=95*24*3600)
+        #self.sim.process(self.monitoring_transfer_process())
+        self.sim.run(until=self.SIM_DURATION)
 
 sim = simpy.Environment()
 cloud = gcp.Cloud()
