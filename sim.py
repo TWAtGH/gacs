@@ -98,12 +98,12 @@ class CloudSimulator(sim.BaseSim):
         self.DATAGEN_WAIT = 3600
         self.DATAGEN_WAIT_MIN = 5 * 24 * 3600
         self.DATAGEN_WAIT_MAX = 8 * 24 * 3600
-        self.DATAGEN_FILES_NUM_MIN = 400
-        self.DATAGEN_FILES_NUM_MAX = 400
+        self.DATAGEN_FILES_NUM_MIN = 350
+        self.DATAGEN_FILES_NUM_MAX = 350
         self.DATAGEN_FILES_SIZE_MIN = 2**28
         self.DATAGEN_FILES_SIZE_MAX = 2**31
         self.DATAGEN_LIFETIME_MIN = 4 * 24 * 3600
-        self.DATAGEN_LIFETIME_MAX = 10 * 24 * 3600
+        self.DATAGEN_LIFETIME_MAX = 7 * 24 * 3600
         self.DATAGEN_REPLICATION_PERCENT = [0.15, 0.80, 0.05]
 
         self.JOBFAC_WAIT_MIN = 6 * 3600 #5 * 3600
@@ -160,9 +160,9 @@ class CloudSimulator(sim.BaseSim):
             total_bytes_gen += bytes_without_num_replicas * num_replicas
             total_replicas_gen += num_files_gen * num_replicas
 
-        log.info('Created {} files with {} replicas using {} of space'.format(total_files_gen,
-                                                                              total_replicas_gen,
-                                                                              utils.sizefmt(total_bytes_gen)), cur_time)
+        #log.info('Created {} files with {} replicas using {} of space'.format(total_files_gen,
+        #                                                                      total_replicas_gen,
+        #                                                                      utils.sizefmt(total_bytes_gen)), cur_time)
 
     def transfer_process(self, transfer):
         log = self.logger.getChild('transfer_proc')
@@ -520,5 +520,7 @@ try:
     cloud_sim.simulate()
 except (KeyboardInterrupt, SystemExit):
     pass
+except Exception as err:
+    print(err)
 
 monitoring.plotIt()

@@ -1,5 +1,6 @@
 
 from gacs import grid
+from gacs.common import monitoring
 
 
 class Region(grid.Site):
