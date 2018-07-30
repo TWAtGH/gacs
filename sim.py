@@ -2,12 +2,16 @@
 import logging
 import random
 import uuid
+import time
 
 import simpy
 
 from gacs import abstractions, grid, sim
 from gacs.clouds import gcp
 from gacs.common import monitoring, utils
+
+import numpy as np
+import numpy.random as npr
 
 class TransferDurationGeneratorJJ:
     def __init__(self):
@@ -18,6 +22,47 @@ class TransferDurationGeneratorJJ:
         size = transfer.file.size
         trf_rate = size / ((size/self.rate)+self.overhead)
         return (size / trf_rate)
+
+    def get_finish_times(now, sizes):
+         mb_scaler = (2**20)
+         overhead = 18.7
+         rate = 27.38 * mb_scaler
+         max_rw = 26.3 * mb_scaler
+         return [max(60, npr.normal(now + (size/min(max_rw, size/((size/rate)+overhead))), 2)) for size in sizes]
+
+class TransferNumGenerator:
+    def __init__(self):
+        self.DELAY_BASE = 30
+        self.ALPHA = 1/self.DELAY_BASE * np.pi/180 * 0.075
+        self.SCALE_OF_SOFTMAX = 15
+        self.OFFSET_OF_SOFTMAX = 150
+        self.GEN_BUNCH_SIZE = 10000
+        self.idx_offset = 0
+        self.softmax_values = np.empty(self.GEN_BUNCH_SIZE)
+        self.make_values(0)
+
+    def make_values(self, start_val):
+        step_size = float(self.DELAY_BASE)
+        end_val = start_val + self.GEN_BUNCH_SIZE * step_size
+        vals = np.arange(start_val, end_val, step_size)
+        vals *= self.ALPHA
+        np.cos(vals, out=self.softmax_values)
+        self.softmax_values *= self.SCALE_OF_SOFTMAX
+        self.softmax_values += self.OFFSET_OF_SOFTMAX
+        self.softmax_values += npr.normal(0, 1, len(vals)) * self.softmax_values * 0.02
+
+    def get_num_to_create(self, cur_time, num_active):
+        idx = int(cur_time / self.DELAY_BASE)
+        idx -= self.idx_offset
+        if idx >= len(self.softmax_values):
+            print('Gen...')
+            self.make_values(cur_time)
+            self.idx_offset += self.GEN_BUNCH_SIZE
+            idx -= self.GEN_BUNCH_SIZE
+        diff_softmax_active = self.softmax_values[idx] - num_active
+        if diff_softmax_active <= 0:
+            return 0
+        return int(diff_softmax_active ** abs(npr.normal(1.05, 0.04)))
 
 class ComputeInstance:
     def __init__(self, bucket_obj):
@@ -38,6 +83,7 @@ class CloudSimulator(sim.BaseSim):
         self.rucio = rucio
 
         self.num_active_transfers = 0
+        self.g2c_num_transfers_active = 0
 
         self.INIT_GRIDLINKS_NUM_MIN = 1
         self.INIT_GRIDLINKS_NUM_MAX = 1
@@ -51,13 +97,14 @@ class CloudSimulator(sim.BaseSim):
         self.TRANSFER_UPDATE_DELAY = 20
         self.DOWNLOAD_UPDATE_DELAY = 10
 
-        self.DATAGEN_WAIT_MIN = 7 * 24 * 3600
-        self.DATAGEN_WAIT_MAX = 7 * 24 * 3600
+        self.DATAGEN_WAIT = 24 * 3600
+        self.DATAGEN_WAIT_MIN = 5 * 24 * 3600
+        self.DATAGEN_WAIT_MAX = 8 * 24 * 3600
         self.DATAGEN_FILES_NUM_MIN = 15000
         self.DATAGEN_FILES_NUM_MAX = 15000
         self.DATAGEN_FILES_SIZE_MIN = 2**28
         self.DATAGEN_FILES_SIZE_MAX = 2**31
-        self.DATAGEN_LIFETIME_MIN = 7 * 24 * 3600
+        self.DATAGEN_LIFETIME_MIN = 5 * 24 * 3600
         self.DATAGEN_LIFETIME_MAX = 14 * 24 * 3600
         self.DATAGEN_REPLICATION_PERCENT = [0.15, 0.80, 0.05]
 
@@ -68,11 +115,13 @@ class CloudSimulator(sim.BaseSim):
         self.JOBFAC_INFILES_NUM_MIN = 1
         self.JOBFAC_INFILES_NUM_MAX = 20
 
-        self.REAPER_WAIT = 300
+        self.REAPER_WAIT = 600
 
         self.MONITORING_TRANSFER_WAIT = 5
 
         self.SIM_DURATION = 65*24*3600
+        self.new_transfers = []
+        self.active_transfers = []
 
     def billing_process(self):
         log = self.logger.getChild('billing_proc')
@@ -118,17 +167,39 @@ class CloudSimulator(sim.BaseSim):
 
     def transfer_process(self, transfer):
         log = self.logger.getChild('transfer_proc')
-        log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
+        #log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
+
+        yield self.sim.timeout(1)
 
         transfer.begin(self.sim.now)
-        self.num_active_transfers += 1
+        self.g2c_num_transfers_active += 1
         yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
 
         while transfer.state == abstractions.Transfer.TRANSFER:
             transfer.update(self.sim.now)
             yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
-        self.num_active_transfers -= 1
+        self.g2c_num_transfers_active -= 1
         transfer.end(self.sim.now)
+
+    def transfer_process2(self):
+        log = self.logger.getChild('transfer_proc2')
+        #log.debug('Transfering {} from {} to {}'.format(transfer.file.name, transfer.linkselector.src_site.name, transfer.linkselector.dst_site.name), self.sim.now)
+
+        while True:
+            for transfer in self.new_transfers:
+                transfer.begin(self.sim.now)
+                self.active_transfers.append(transfer)
+            self.new_transfers.clear()
+            yield self.sim.timeout(self.TRANSFER_UPDATE_DELAY)
+            complete = []
+            for transfer in self.active_transfers:
+                if transfer.state != abstractions.Transfer.TRANSFER:
+                    complete.append(transfer)
+                else:
+                    transfer.update(self.sim.now)
+            for transfer in complete:
+                transfer.end(self.sim.now)
+                self.active_transfers.remove(transfer)
 
     def download_process(self, download):
         log = self.logger.getChild('download_proc')
@@ -322,26 +393,32 @@ class CloudSimulator(sim.BaseSim):
         log.info('Started transfer generation process!', self.sim.now)
 
         while True:
-            wait = random.randint(self.TRANSFERFAC_WAIT_MIN, self.TRANSFERFAC_WAIT_MAX)
+            yield self.sim.timeout(30)
             # generate grid -> cloud
-            num_transfers = random.randint(self.TRANSFERFAC_G2C_NUM_MIN, self.TRANSFERFAC_G2C_NUM_MAX)
-            num_transfers_per_rse = max(1, int(num_transfers / len(self.grid_rses)))  # assuming uniform distribution
+            num_active = len(self.active_transfers)
+            num_to_create = self.g2c_num_generator.get_num_to_create(self.sim.now, num_active)
+            num_to_create_per_rse = max(1, int(num_to_create / len(self.grid_rses)))  # assuming uniform distribution
             total_transfers_created = 0
-            for rse_obj in self.grid_rses:
-                num_files = min(len(rse_obj.replica_list), num_transfers_per_rse)
-                if (num_files + total_transfers_created) > num_transfers:
-                    num_files = num_transfers - total_transfers_created
+            for grid_rse_obj in self.grid_rses:
+                num_files = min(len(grid_rse_obj.replica_list), num_to_create_per_rse)
+                if (num_files + total_transfers_created) > num_to_create:
+                    num_files = num_to_create - total_transfers_created
                 if num_files <= 0:
                     continue
                 total_transfers_created += num_files
-                files = random.sample(rse_obj.replica_list, num_files)
-
+                replicas = random.sample(grid_rse_obj.replica_list, num_files)
+                cloud_rse_obj = npr.choice(self.cloud.bucket_list)
+                for replica in replicas:
+                    if cloud_rse_obj.name in replica.file.rse_by_name:
+                        #log.warning('{} to {}'.format(grid_rse_obj.name, cloud_rse_obj.name))
+                        continue
+                    self.new_transfers.append(self.rucio.create_transfer(replica.file, grid_rse_obj, cloud_rse_obj))
+            #log.debug('active: {}, to_create: {}, created: 0'.format(num_active, num_to_create), self.sim.now)
 
             # generate cloud -> cloud
                 # 1. same multi regional location
                 # 2. between multi regional locations
             # generate cloud -> else
-            yield self.sim.timeout(wait)
 
     def grid_data_gen_process(self):
         log = self.logger.getChild('grid_data_gen_process')
@@ -349,32 +426,40 @@ class CloudSimulator(sim.BaseSim):
 
         while True:
             self.generate_grid_data(self.sim.now)
-            wait = random.randint(self.DATAGEN_WAIT_MIN, self.DATAGEN_WAIT_MAX)
-            yield self.sim.timeout(wait)
+            #wait = random.randint(self.DATAGEN_WAIT_MIN, self.DATAGEN_WAIT_MAX)
+            yield self.sim.timeout(self.DATAGEN_WAIT)
 
     def reaper_process(self):
         log = self.logger.getChild('reaper_process')
         log.info('Started Reaper process!', self.sim.now)
         while True:
-            monitoring.OnPreReaper(self.sim.now)
-            num_deleted = self.rucio.run_reaper_bisect(self.sim.now)
-            monitoring.OnPostReaper(self.sim.now, num_deleted)
-            #log.info('Reapered {}'.format(num_deleted), self.sim.now)
+            #monitoring.OnPreReaper(self.sim.now)
+            t1 = time.time()
+            num_deleted = self.rucio.run_reaper_random2(self.sim.now)
+            print(time.time() - t1)
+            #monitoring.OnPostReaper(self.sim.now, num_deleted)
+            if num_deleted:
+                log.info('Reapered {}'.format(num_deleted), self.sim.now)
             yield self.sim.timeout(self.REAPER_WAIT)
 
     def monitoring_transfer_process(self):
         log = self.logger.getChild('monitoring_transfer_process')
         log.info('Started Monitoring-Transfer process!', self.sim.now)
         while True:
-            monitoring.OnMonitorTransfer(self.sim.now, self.num_active_transfers)
+            monitoring.OnMonitorTransfer(self.sim.now, self.g2c_num_transfers_active)
             yield self.sim.timeout(self.MONITORING_TRANSFER_WAIT)
-
 
     def init_simulation(self):
         log = self.logger.getChild('sim_init')
         random.seed(42)
 
-        self.transfer_duration_generator = TransferDurationGeneratorJJ()
+        log.info('Initialising transfer generators')
+        self.g2c_num_generator = TransferNumGenerator()
+        #self.g2c_num_generator.duration_generator = TransferDurationGeneratorJJ()
+        #self.c2g_num_generator = TransferNumGenerator()
+        #self.c2g_num_generator.duration_generator = TransferDurationGeneratorJJ()
+        #self.c2c_num_generator = TransferNumGenerator()
+        #self.c2c_num_generator.duration_generator = TransferDurationGeneratorJJ()
 
         self.grid_rses = []
         asia_site = grid.Site('ASGC', ['asia'])
@@ -422,6 +507,7 @@ class CloudSimulator(sim.BaseSim):
         self.sim.process(self.grid_data_gen_process())
         #self.sim.process(self.job_gen_process())
         self.sim.process(self.transfer_gen_process())
+        self.sim.process(self.transfer_process2())
         self.sim.process(self.reaper_process())
         #self.sim.process(self.monitoring_transfer_process())
         self.sim.run(until=self.SIM_DURATION)

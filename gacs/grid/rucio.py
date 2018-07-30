@@ -15,9 +15,9 @@ class Rucio:
         self.file_list = []
         self.file_by_name = {}
 
-        self.die_time_prio_counter = itertools.count(1)
-        self.die_times = []
-
+        #self.die_time_prio_counter = itertools.count(1)
+        #self.die_times = []
+        #self.min_die_time = 0
 
     def get_rse_obj(self, rse):
         rse_obj = None
@@ -59,11 +59,12 @@ class Rucio:
         new_file = File(file_name, file_size, die_time)
         self.file_list.append(new_file)
         self.file_by_name[file_name] = new_file
+        #self.min_die_time = min(self.min_die_time, die_time)
         # O(log n) search + rebalancing
         # heapq.heappush(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
 
         # O(log n) search + insertion
-        bisect.insort(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
+        #bisect.insort(self.die_times, (die_time, next(self.die_time_prio_counter), new_file))
         return new_file
 
     def create_transfer(self, file, src_rse, dst_rse):
@@ -77,10 +78,6 @@ class Rucio:
         dst_replica = self.create_replica(file, dst_rse_obj)
         transfer = abstractions.Transfer(file, linkselector, dst_replica)
         return transfer
-
-    def create_download(self, src_replica, dst_site):
-        linkselector = src_replica.rse_obj.site_obj.linkselector_by_name[dst_site.name]
-        return abstractions.Download(src_replica, linkselector)
 
     def run_reaper_heap(self, current_time):
         num_files = len(self.file_list)
@@ -106,6 +103,28 @@ class Rucio:
             del self.file_by_name[f.name]
         del self.die_times[0:p]
         return num_files - len(self.file_list)
+
+    def run_reaper_random(self, current_time):
+        num_files = len(self.file_list)
+        if not num_files or self.min_die_time > current_time:
+            return 0
+        self.file_list.sort(key=lambda file_obj: file_obj.die_time, reverse=True)
+        file_obj = self.file_list[-1]
+        while file_obj.die_time <= current_time:
+            file_obj.delete(current_time)
+            del self.file_by_name[file_obj.name]
+            self.file_list.pop()
+            file_obj = self.file_list[-1]
+        self.min_die_time = file_obj.die_time
+        return num_files - len(self.file_list)
+
+    def run_reaper_random2(self, current_time):
+        to_remove = list(filter(lambda file_obj: file_obj.die_time <= current_time, self.file_list))
+        self.file_list = list(filter(lambda file_obj: file_obj.die_time > current_time, self.file_list))
+        for file_obj in to_remove:
+            file_obj.delete(current_time)
+            del self.file_by_name[file_obj.name]
+        return len(to_remove)
 
     def run_reaper_linear(self, current_time):
         num_files = len(self.file_list)
