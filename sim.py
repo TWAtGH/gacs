@@ -35,7 +35,7 @@ class TransferNumGenerator:
         self.DELAY_BASE = 30
         self.ALPHA = 1/self.DELAY_BASE * np.pi/180 * 0.075
         self.SCALE_OF_SOFTMAX = 15
-        self.OFFSET_OF_SOFTMAX = 150
+        self.OFFSET_OF_SOFTMAX = 500
         self.GEN_BUNCH_SIZE = 10000
         self.idx_offset = 0
         self.softmax_values = np.empty(self.GEN_BUNCH_SIZE)
@@ -55,7 +55,6 @@ class TransferNumGenerator:
         idx = int(cur_time / self.DELAY_BASE)
         idx -= self.idx_offset
         if idx >= len(self.softmax_values):
-            print('Gen...')
             self.make_values(cur_time)
             self.idx_offset += self.GEN_BUNCH_SIZE
             idx -= self.GEN_BUNCH_SIZE
@@ -95,17 +94,16 @@ class CloudSimulator(sim.BaseSim):
         self.INIT_CLOUDLINKS_BW_EXPO_MAX = 29
 
         self.TRANSFER_UPDATE_DELAY = 20
-        self.DOWNLOAD_UPDATE_DELAY = 10
 
-        self.DATAGEN_WAIT = 24 * 3600
+        self.DATAGEN_WAIT = 3600
         self.DATAGEN_WAIT_MIN = 5 * 24 * 3600
         self.DATAGEN_WAIT_MAX = 8 * 24 * 3600
-        self.DATAGEN_FILES_NUM_MIN = 15000
-        self.DATAGEN_FILES_NUM_MAX = 15000
+        self.DATAGEN_FILES_NUM_MIN = 400
+        self.DATAGEN_FILES_NUM_MAX = 400
         self.DATAGEN_FILES_SIZE_MIN = 2**28
         self.DATAGEN_FILES_SIZE_MAX = 2**31
-        self.DATAGEN_LIFETIME_MIN = 5 * 24 * 3600
-        self.DATAGEN_LIFETIME_MAX = 14 * 24 * 3600
+        self.DATAGEN_LIFETIME_MIN = 4 * 24 * 3600
+        self.DATAGEN_LIFETIME_MAX = 10 * 24 * 3600
         self.DATAGEN_REPLICATION_PERCENT = [0.15, 0.80, 0.05]
 
         self.JOBFAC_WAIT_MIN = 6 * 3600 #5 * 3600
@@ -117,11 +115,12 @@ class CloudSimulator(sim.BaseSim):
 
         self.REAPER_WAIT = 600
 
-        self.MONITORING_TRANSFER_WAIT = 5
+        self.MONITORING_WAIT = 15
 
         self.SIM_DURATION = 65*24*3600
         self.new_transfers = []
         self.active_transfers = []
+        self.last_reaper_duration = 0
 
     def billing_process(self):
         log = self.logger.getChild('billing_proc')
@@ -436,18 +435,19 @@ class CloudSimulator(sim.BaseSim):
             #monitoring.OnPreReaper(self.sim.now)
             t1 = time.time()
             num_deleted = self.rucio.run_reaper_random2(self.sim.now)
-            print(time.time() - t1)
+            self.last_reaper_duration = time.time() - t1
+            #print(self.last_reaper_duration)
             #monitoring.OnPostReaper(self.sim.now, num_deleted)
-            if num_deleted:
-                log.info('Reapered {}'.format(num_deleted), self.sim.now)
+            #if num_deleted:
+                #log.info('Reapered {}'.format(num_deleted), self.sim.now)
             yield self.sim.timeout(self.REAPER_WAIT)
 
-    def monitoring_transfer_process(self):
+    def monitoring_process(self):
         log = self.logger.getChild('monitoring_transfer_process')
         log.info('Started Monitoring-Transfer process!', self.sim.now)
         while True:
-            monitoring.OnMonitorTransfer(self.sim.now, self.g2c_num_transfers_active)
-            yield self.sim.timeout(self.MONITORING_TRANSFER_WAIT)
+            monitoring.OnMonitorTick(self.sim.now, len(self.active_transfers), self.last_reaper_duration, len(self.rucio.file_list))
+            yield self.sim.timeout(self.MONITORING_WAIT)
 
     def init_simulation(self):
         log = self.logger.getChild('sim_init')
@@ -509,13 +509,16 @@ class CloudSimulator(sim.BaseSim):
         self.sim.process(self.transfer_gen_process())
         self.sim.process(self.transfer_process2())
         self.sim.process(self.reaper_process())
-        #self.sim.process(self.monitoring_transfer_process())
+        self.sim.process(self.monitoring_process())
         self.sim.run(until=self.SIM_DURATION)
+try:
+    sim = simpy.Environment()
+    cloud = gcp.Cloud()
+    rucio = grid.Rucio()
+    cloud_sim = CloudSimulator(sim, cloud, rucio)
+    cloud_sim.init_simulation()
+    cloud_sim.simulate()
+except (KeyboardInterrupt, SystemExit):
+    pass
 
-sim = simpy.Environment()
-cloud = gcp.Cloud()
-rucio = grid.Rucio()
-cloud_sim = CloudSimulator(sim, cloud, rucio)
-cloud_sim.init_simulation()
-cloud_sim.simulate()
 monitoring.plotIt()

@@ -12,29 +12,17 @@ class MonitoringData:
         self.transfer_num_deleted = 0
         self.transfer_duration = []
         self.transfer_size = []
-        self.transfer_history_count = []
-        self.deletion_time_start = 0
+        self.tick_times = []
+        self.num_active_transfers = []
+        self.reaper_duration = []
+        self.num_files = []
+        self.storage_graph = ([], [])
+        self.storage_graph_indices = {}
 
 
 def init():
     global data
     data = MonitoringData()
-
-
-def OnDownloadBegin(download):
-    pass
-
-
-def OnDownloadEnd(download):
-    pass
-
-
-def OnUploadBegin(upload):
-    pass
-
-
-def OnUploadEnd(upload):
-    pass
 
 
 def OnTransferBegin(transfer):
@@ -62,22 +50,28 @@ def OnCreateTransferCloudToCloud(transfer):
     pass
 
 
+def OnCloudStorageVolumeChange(bucket, time, volume):
+    idx = data.storage_graph_indices.get(bucket.name)
+    if not idx:
+        idx = len(data.storage_graph_indices)
+        data.storage_graph_indices[bucket.name] = idx
+        data.storage_graph[0].append([])
+        data.storage_graph[1].append([])
+    data.storage_graph[0][idx].append(time)
+    data.storage_graph[1][idx].append(volume)
+
+
 def OnBillingDone(bill, month):
     data.costs_storage.append(bill['storage_total'])
     data.costs_network.append(bill['network_total'])
 
 
-def OnPreReaper(current_time):
-    data.deletion_time_start = time.time()
+def OnMonitorTick(current_time, num_active_transfers, last_reaper_duration, num_files):
+    data.tick_times.append(current_time)
+    data.num_active_transfers.append(num_active_transfers)
+    data.reaper_duration.append(last_reaper_duration)
+    data.num_files.append(num_files)
 
-
-def OnPostReaper(current_time, num_deleted):
-    if num_deleted > 0:
-        deletion_duration = time.time() - data.deletion_time_start
-        #print('Deleted {} files in {:.2f}s'.format(num_deleted, deletion_duration))
-
-def OnMonitorTransfer(current_time, num_active_transfers):
-    data.transfer_history_count.append(num_active_transfers)
 
 def plotIt():
     import matplotlib.pyplot as plt
@@ -103,8 +97,26 @@ def plotIt():
     plt.xlabel('time/month')
 
     plt.figure(2)
-    plt.plot(data.transfer_history_count, label='active transfers')
-    plt.ylabel('count')
+    plt.plot(data.tick_times, data.num_active_transfers)
+    plt.legend(['NumActiveTransfers'])
     plt.xlabel('time')
+
+    plt.figure(3)
+    plt.plot(data.tick_times, data.reaper_duration)
+    plt.legend(['ReaperDuration'])
+    plt.xlabel('time')
+
+    plt.figure(4)
+    plt.plot(data.tick_times, data.num_files)
+    plt.legend(['NumFiles'])
+    plt.xlabel('time')
+
+    plt.figure(5)
+    for k in data.storage_graph_indices:
+        idx = data.storage_graph_indices[k]
+        plt.plot(data.storage_graph[0][idx], data.storage_graph[1][idx], label=k)
+    plt.ylabel('volume GiB')
+    plt.xlabel('time')
+    plt.legend()
 
     plt.show()

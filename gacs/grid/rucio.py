@@ -1,11 +1,11 @@
 
-import heapq
-import bisect
+#import heapq
+#import bisect
 
 from gacs import abstractions
 from gacs.grid import File, StorageElement
 
-import itertools
+#import itertools
 
 class Rucio:
     def __init__(self):

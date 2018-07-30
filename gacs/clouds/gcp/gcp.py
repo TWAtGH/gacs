@@ -46,15 +46,17 @@ class Bucket(grid.StorageElement):
         time_offset = self.time_at_last_reset
         used_storage_at_time = self.storage_at_last_reset
         costs = 0
-
+        gb_scale = 1024**3
+        month_scale = 30*24*3600
         for event in self.storage_events:
             time_diff = event[0] - time_offset
             assert time_diff >= 0
             if time_diff > 0:
-                storage_gb = used_storage_at_time/(1024**3)
-                time_month = time_diff/(30*24*3600)
+                storage_gb = used_storage_at_time/gb_scale
+                time_month = time_diff/month_scale
                 costs += storage_gb * time_month * price
                 time_offset = event[0]
+                monitoring.OnCloudStorageVolumeChange(self, event[0], used_storage_at_time)
             used_storage_at_time += event[1]
 
         assert used_storage_at_time == self.used_storage, (used_storage_at_time, self.used_storage)
@@ -62,8 +64,8 @@ class Bucket(grid.StorageElement):
         if time_offset < current_time:
             time_diff = current_time - time_offset
 
-            storage_gb = used_storage_at_time/(1024**3)
-            time_month = time_diff/(30*24*3600)
+            storage_gb = used_storage_at_time/gb_scale
+            time_month = time_diff/month_scale
             costs += storage_gb * time_month * price
 
         self.time_at_last_reset = current_time
@@ -155,7 +157,7 @@ class Cloud:
         eu - apac EF0A-B3BA-32CA 0.1121580 0.1121580 0.1028115 0.0747720
         na - apac 6B37-399C-BF69 0.0000000 0.1121580 0.1028115 0.0747720
         na - eu   C7FF-4F9E-C0DB 0.0000000 0.1121580 0.1028115 0.0747720
- 
+
         au - apac CDD1-6B91-FDF8 0.1775835 0.1775835 0.1682370 0.1401975
         au - eu   1E7D-CBB0-AF0C 0.1775835 0.1775835 0.1682370 0.1401975
         au - na   27F0-D54C-619A 0.1775835 0.1775835 0.1682370 0.1401975
@@ -174,11 +176,11 @@ class Cloud:
         cost_ww['asia']['europe']               = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
         cost_ww['asia']['southamerica-east1']   = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
         cost_ww['asia']['us']                   = [(1, 0.0000000), (1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
-        
+
         cost_ww['australia-southeast1']['europe']             = [(1024, 0.1775835), (10240, 0.1682370), (10240, 0.1401975)]
         cost_ww['australia-southeast1']['southamerica-east1'] = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
         cost_ww['australia-southeast1']['us']                 = [(1024, 0.1775835), (10240, 0.1682370), (10240, 0.1401975)]
-        
+
         cost_ww['europe']['southamerica-east1'] = [(1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
         cost_ww['europe']['us']                 = [(1, 0.0000000), (1024, 0.1121580), (10240, 0.1028115), (10240, 0.0747720)]
 
