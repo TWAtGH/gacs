@@ -10,7 +10,7 @@ class File:
 
         self.rse_list = []
         self.rse_by_name = {}
-        
+
         self.replica_list = []
         #self.replica_by_id = {}
 
@@ -52,10 +52,11 @@ class Replica:
     AVAILABLE = 1
     DELETED = 2
 
-    def __init__(self, rse_obj, file_obj):
+    def __init__(self, rse_obj, file_obj, rse_index):
         self.id = utils.next_id()
         self.rse_obj = rse_obj
         self.file = file_obj
+        self.rse_index = rse_index
         self.size = 0
         self.state = self.CORRUPTED
 
@@ -68,4 +69,3 @@ class Replica:
     def delete(self, current_time):
         self.size = 0
         self.state = self.DELETED
-

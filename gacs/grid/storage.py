@@ -38,7 +38,7 @@ class StorageElement:
     def create_replica(self, file_obj):
         if file_obj.name in self.replica_by_name:
             raise NotImplementedError()
-        new_replica = Replica(self, file_obj)
+        new_replica = Replica(self, file_obj, len(self.replica_list))
         self.replica_list.append(new_replica)
         self.replica_by_name[file_obj.name] = new_replica
         file_obj.add_replica(new_replica)
@@ -53,6 +53,13 @@ class StorageElement:
 
     def remove_replica(self, file_obj, current_time):
         replica_obj = self.replica_by_name.pop(file_obj.name)
-        self.replica_list.remove(replica_obj)
+        tmp = self.replica_list.pop()
+        try:
+            tmp.rse_index = replica_obj.rse_index
+            self.replica_list[tmp.rse_index] = tmp
+        except IndexError as err:
+            print(err)
+            pass
+        #self.replica_list.remove(replica_obj)
         self.used_storage -= replica_obj.size
         replica_obj.delete(current_time)

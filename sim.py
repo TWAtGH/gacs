@@ -35,7 +35,7 @@ class TransferNumGenerator:
         self.DELAY_BASE = 30
         self.ALPHA = 1/self.DELAY_BASE * np.pi/180 * 0.075
         self.SCALE_OF_SOFTMAX = 15
-        self.OFFSET_OF_SOFTMAX = 500
+        self.OFFSET_OF_SOFTMAX = 600
         self.GEN_BUNCH_SIZE = 10000
         self.idx_offset = 0
         self.softmax_values = np.empty(self.GEN_BUNCH_SIZE)
@@ -98,13 +98,13 @@ class CloudSimulator(sim.BaseSim):
         self.DATAGEN_WAIT = 3600
         self.DATAGEN_WAIT_MIN = 5 * 24 * 3600
         self.DATAGEN_WAIT_MAX = 8 * 24 * 3600
-        self.DATAGEN_FILES_NUM_MIN = 350
-        self.DATAGEN_FILES_NUM_MAX = 350
+        self.DATAGEN_FILES_NUM_MIN = 300
+        self.DATAGEN_FILES_NUM_MAX = 400
         self.DATAGEN_FILES_SIZE_MIN = 2**28
         self.DATAGEN_FILES_SIZE_MAX = 2**31
         self.DATAGEN_LIFETIME_MIN = 4 * 24 * 3600
         self.DATAGEN_LIFETIME_MAX = 7 * 24 * 3600
-        self.DATAGEN_REPLICATION_PERCENT = [0.15, 0.80, 0.05]
+        self.DATAGEN_REPLICATION_PERCENT = [0.35, 0.60, 0.05]
 
         self.JOBFAC_WAIT_MIN = 6 * 3600 #5 * 3600
         self.JOBFAC_WAIT_MAX = 18 * 3600 #24 * 3600
@@ -117,7 +117,7 @@ class CloudSimulator(sim.BaseSim):
 
         self.MONITORING_WAIT = 15
 
-        self.SIM_DURATION = 65*24*3600
+        self.SIM_DURATION = (90*24*3600) + 1
         self.new_transfers = []
         self.active_transfers = []
         self.last_reaper_duration = 0
@@ -436,7 +436,7 @@ class CloudSimulator(sim.BaseSim):
             t1 = time.time()
             num_deleted = self.rucio.run_reaper_random2(self.sim.now)
             self.last_reaper_duration = time.time() - t1
-            #print(self.last_reaper_duration)
+            print('{:>10} - {:2.f}'.format(self.sim.now, self.last_reaper_duration))
             #monitoring.OnPostReaper(self.sim.now, num_deleted)
             #if num_deleted:
                 #log.info('Reapered {}'.format(num_deleted), self.sim.now)
@@ -451,6 +451,7 @@ class CloudSimulator(sim.BaseSim):
 
     def init_simulation(self):
         log = self.logger.getChild('sim_init')
+        npr.seed(42)
         random.seed(42)
 
         log.info('Initialising transfer generators')
