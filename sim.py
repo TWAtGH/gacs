@@ -436,7 +436,7 @@ class CloudSimulator(sim.BaseSim):
             t1 = time.time()
             num_deleted = self.rucio.run_reaper_random2(self.sim.now)
             self.last_reaper_duration = time.time() - t1
-            print('{:>10} - {:2.f}'.format(self.sim.now, self.last_reaper_duration))
+            #print('{:>10} - {:2.f}'.format(self.sim.now, self.last_reaper_duration))
             #monitoring.OnPostReaper(self.sim.now, num_deleted)
             #if num_deleted:
                 #log.info('Reapered {}'.format(num_deleted), self.sim.now)

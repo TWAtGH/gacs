@@ -6,8 +6,6 @@ import time
 data = None
 class MonitoringData:
     def __init__(self):
-        self.costs_storage = []
-        self.costs_network = []
         self.transfer_num_completed = 0
         self.transfer_num_deleted = 0
         self.transfer_duration = []
@@ -16,7 +14,7 @@ class MonitoringData:
         self.num_active_transfers = []
         self.reaper_duration = []
         self.num_files = []
-        self.storage_graph = ([], [])
+        self.storage_graph = ([], [], [])
         self.storage_graph_indices = {}
 
 
@@ -50,20 +48,21 @@ def OnCreateTransferCloudToCloud(transfer):
     pass
 
 
-def OnCloudStorageVolumeChange(bucket, time, volume):
+def OnCloudStorageVolumeChange(bucket, time, volume, cost):
     idx = data.storage_graph_indices.get(bucket.name)
     if not idx:
         idx = len(data.storage_graph_indices)
         data.storage_graph_indices[bucket.name] = idx
         data.storage_graph[0].append([])
         data.storage_graph[1].append([])
+        data.storage_graph[2].append([])
     data.storage_graph[0][idx].append(time)
     data.storage_graph[1][idx].append(volume)
+    data.storage_graph[2][idx].append(cost)
 
 
 def OnBillingDone(bill, month):
-    data.costs_storage.append(bill['storage_total'])
-    data.costs_network.append(bill['network_total'])
+    pass
 
 
 def OnMonitorTick(current_time, num_active_transfers, last_reaper_duration, num_files):
@@ -91,32 +90,37 @@ def plotIt():
     print('AvgDuration:    {:,.2f}'.format(statistics.mean(data.transfer_duration)))
 
     plt.figure(1)
-    plt.plot(data.costs_storage, label='storage costs')
-    plt.plot(data.costs_network, label='newtork costs')
-    plt.ylabel('costs/CHF')
-    plt.xlabel('time/month')
-
-    plt.figure(2)
-    plt.plot(data.tick_times, data.num_active_transfers)
-    plt.legend(['NumActiveTransfers'])
-    plt.xlabel('time')
-
-    plt.figure(3)
-    plt.plot(data.tick_times, data.reaper_duration)
-    plt.legend(['ReaperDuration'])
-    plt.xlabel('time')
-
-    plt.figure(4)
-    plt.plot(data.tick_times, data.num_files)
-    plt.legend(['NumFiles'])
-    plt.xlabel('time')
-
-    plt.figure(5)
     for k in data.storage_graph_indices:
         idx = data.storage_graph_indices[k]
         plt.plot(data.storage_graph[0][idx], data.storage_graph[1][idx], label=k)
-    plt.ylabel('volume GiB')
-    plt.xlabel('time')
     plt.legend()
+    plt.ylabel('volume GiB')
+    plt.xlabel('sim time/tick')
+
+    plt.figure(2)
+    for k in data.storage_graph_indices:
+        idx = data.storage_graph_indices[k]
+        plt.plot(data.storage_graph[0][idx], data.storage_graph[2][idx], label=k)
+    plt.legend()
+    plt.ylabel('costs/CHF')
+    plt.xlabel('sim time/tick')
+
+    plt.figure(3)
+    plt.plot(data.tick_times, data.num_active_transfers)
+    plt.legend(['NumActiveTransfers'])
+    plt.ylabel('count')
+    plt.xlabel('sim time/tick')
+
+    plt.figure(4)
+    plt.plot(data.tick_times, data.reaper_duration)
+    plt.legend(['ReaperDuration'])
+    plt.ylabel('duration/s (realtime)')
+    plt.xlabel('sim time/tick')
+
+    plt.figure(5)
+    plt.plot(data.tick_times, data.num_files)
+    plt.legend(['NumFiles'])
+    plt.ylabel('count')
+    plt.xlabel('sim time/tick')
 
     plt.show()

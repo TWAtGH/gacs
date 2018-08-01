@@ -55,9 +55,10 @@ class Bucket(grid.StorageElement):
             if time_diff > 0:
                 storage_gb = used_storage_at_time/gb_scale
                 time_month = time_diff/month_scale
-                costs += storage_gb * time_month * price
+                c = storage_gb * time_month * price
+                costs += c
                 time_offset = event[0]
-                monitoring.OnCloudStorageVolumeChange(self, event[0], used_storage_at_time)
+                monitoring.OnCloudStorageVolumeChange(self, event[0], storage_gb, c)
             used_storage_at_time += event[1]
 
         assert used_storage_at_time == self.used_storage, (used_storage_at_time, self.used_storage)
