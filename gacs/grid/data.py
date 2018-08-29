@@ -3,10 +3,11 @@ from gacs.common import monitoring, utils
 
 
 class File:
-    def __init__(self, file_name, size, die_time):
+    def __init__(self, file_name, size, die_time, file_index):
         self.name = file_name
         self.size = size
         self.die_time = die_time
+        self.file_index = file_index
 
         self.rse_list = []
         self.rse_by_name = {}

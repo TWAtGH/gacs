@@ -56,7 +56,7 @@ class Rucio:
         if file_name in self.file_by_name:
             raise RuntimeError('Rucio.create_file: file name {} is already registerd'.format(file_name))
 
-        new_file = File(file_name, file_size, die_time)
+        new_file = File(file_name, file_size, die_time, len(self.file_list))
         self.file_list.append(new_file)
         self.file_by_name[file_name] = new_file
         #self.min_die_time = min(self.min_die_time, die_time)
@@ -120,8 +120,15 @@ class Rucio:
 
     def run_reaper_random2(self, current_time):
         to_remove = list(filter(lambda file_obj: file_obj.die_time <= current_time, self.file_list))
-        self.file_list = list(filter(lambda file_obj: file_obj.die_time > current_time, self.file_list))
+        #self.file_list = list(filter(lambda file_obj: file_obj.die_time > current_time, self.file_list))
         for file_obj in to_remove:
+            tmp = self.file_list.pop()
+            try:
+                tmp.file_index = file_obj.file_index
+                self.file_list[tmp.file_index] = tmp
+            except IndexError as err:
+                print(err)
+                pass
             file_obj.delete(current_time)
             del self.file_by_name[file_obj.name]
         return len(to_remove)
